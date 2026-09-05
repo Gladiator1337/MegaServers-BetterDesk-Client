@@ -846,7 +846,7 @@ pub mod client {
     }
 
     fn has_running_portable_service_process() -> bool {
-        let app_exe = format!("{}.exe", crate::get_app_name().to_lowercase());
+        let app_exe = format!("{}.exe", crate::get_exe_name());
         !crate::platform::get_pids_of_process_with_first_arg(&app_exe, "--portable-service")
             .is_empty()
     }

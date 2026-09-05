@@ -763,5 +763,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Lock canvas", "Заблакіраваць палатно"),
         ("Sync clipboard between sessions", "Сінхранізаваць буфер абмену паміж сеансамі"),
         ("sync-clipboard-between-sessions-tip", "Тэкст або відарысы, скапіяваныя ў адным аддаленым сеансе, таксама адпраўляюцца ў буфер абмену іншых вашых падключаных сеансаў."),
+        ("betterdesk_fork_attribution_tip", ""),
+        ("Source code", ""),
+        ("Upstream", ""),
+        ("View license", ""),
+        ("License", ""),
     ].iter().cloned().collect();
 }

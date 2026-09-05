@@ -566,6 +566,10 @@ pub fn is_installed_lower_version() -> bool {
     return false;
     #[cfg(windows)]
     {
+        // BetterDesk: never show the stock "lower version / update" install card.
+        if crate::is_custom_client() {
+            return false;
+        }
         let b = crate::platform::windows::get_reg("BuildDate");
         return crate::BUILD_DATE.cmp(&b).is_gt();
     }
@@ -597,7 +601,21 @@ pub fn temporary_password() -> String {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     return password_security::temporary_password();
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    return TEMPORARY_PASSWD.lock().unwrap().clone();
+    {
+        let cached = TEMPORARY_PASSWD.lock().unwrap().clone();
+        if !cached.is_empty() {
+            return cached;
+        }
+        // Cache is filled by the background IPC poller (1s). Fetch once on demand so the
+        // home screen does not stay on "Generating ..." after APP_NAME/IPC renames.
+        if let Ok(Some(v)) = ipc::get_config("temporary-password") {
+            if !v.is_empty() {
+                *TEMPORARY_PASSWD.lock().unwrap() = v.clone();
+                return v;
+            }
+        }
+        cached
+    }
 }
 
 #[inline]
@@ -1355,6 +1373,14 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
 
     loop {
         if let Ok(mut c) = ipc::connect(1000, "").await {
+            // Request password/id immediately so UI is not stuck on "Generating ..." for ~1s.
+            c.send(&ipc::Data::Config(("temporary-password".to_owned(), None)))
+                .await
+                .ok();
+            c.send(&ipc::Data::Config(("id".to_owned(), None)))
+                .await
+                .ok();
+            c.send(&ipc::Data::Options(None)).await.ok();
             let mut timer = crate::rustdesk_interval(time::interval(time::Duration::from_secs(1)));
             loop {
                 tokio::select! {

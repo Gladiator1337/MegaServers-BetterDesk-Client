@@ -763,5 +763,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Lock canvas", "Užrakinti drobę"),
         ("Sync clipboard between sessions", "Sinchronizuoti iškarpinę tarp seansų"),
         ("sync-clipboard-between-sessions-tip", "Viename nuotoliniame seanse nukopijuotas tekstas ar vaizdai taip pat siunčiami į kitų prijungtų seansų iškarpinę."),
+        ("betterdesk_fork_attribution_tip", ""),
+        ("Source code", ""),
+        ("Upstream", ""),
+        ("View license", ""),
+        ("License", ""),
     ].iter().cloned().collect();
 }

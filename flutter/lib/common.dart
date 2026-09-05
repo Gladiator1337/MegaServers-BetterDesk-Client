@@ -3730,8 +3730,10 @@ Color? disabledTextColor(BuildContext context, bool enabled) {
 }
 
 Widget loadPowered(BuildContext context) {
-  if (bind.mainGetBuildinOption(key: "hide-powered-by-me") == 'Y') {
-    return SizedBox.shrink();
+  // BetterDesk official client: never show "Powered by RustDesk".
+  if (bind.isCustomClient() ||
+      bind.mainGetBuildinOption(key: "hide-powered-by-me") == 'Y') {
+    return const SizedBox.shrink();
   }
   return MouseRegion(
     cursor: SystemMouseCursors.click,
@@ -4065,20 +4067,7 @@ void earlyAssert() {
 }
 
 void checkUpdate() {
-  if (!isWeb) {
-    if (!bind.isCustomClient()) {
-      platformFFI.registerEventHandler(
-          kCheckSoftwareUpdateFinish, kCheckSoftwareUpdateFinish,
-          (Map<String, dynamic> evt) async {
-        if (evt['url'] is String) {
-          stateGlobal.updateUrl.value = evt['url'];
-        }
-      });
-      Timer(const Duration(seconds: 1), () async {
-        bind.mainGetSoftwareUpdateUrl();
-      });
-    }
-  }
+  // BetterDesk: temporarily disable rustdesk.com / client software update checks.
 }
 
 // https://github.com/flutter/flutter/issues/153560#issuecomment-2497160535

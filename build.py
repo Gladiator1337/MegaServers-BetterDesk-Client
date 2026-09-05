@@ -23,8 +23,17 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 windows = platform.platform().startswith('Windows')
 osx = platform.platform().startswith(
     'Darwin') or platform.platform().startswith("macOS")
-hbb_name = 'rustdesk' + ('.exe' if windows else '')
-exe_path = 'target/release/' + hbb_name
+# Prefer explicit local target dir so Cursor/sandbox CARGO_TARGET_DIR does not
+# leave a stale librustdesk.dll in ./target/release while cargo writes elsewhere.
+_cargo_target_env = os.environ.get('CARGO_TARGET_DIR', '')
+_repo_target = os.path.join(REPO_ROOT, 'target')
+if (not _cargo_target_env
+        or 'cursor-sandbox-cache' in _cargo_target_env.replace('\\', '/').lower()
+        or os.environ.get('BETTERDESK_FORCE_LOCAL_CARGO_TARGET') == '1'):
+    os.environ['CARGO_TARGET_DIR'] = _repo_target
+_cargo_target = os.environ['CARGO_TARGET_DIR']
+hbb_name = 'betterdesk' + ('.exe' if windows else '')
+exe_path = os.path.join(_cargo_target, 'release', hbb_name)
 if windows:
     win_arch = 'arm64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x64'
     flutter_build_dir = f'build/windows/{win_arch}/runner/Release/'
@@ -929,32 +938,37 @@ def build_flutter_arch_manjaro(version, features):
 def build_flutter_windows(version, features, skip_portable_pack):
     if not skip_cargo:
         system2(f'cargo build --locked --features {features} --lib --release')
-        if not os.path.exists("target/release/librustdesk.dll"):
+        dll = os.path.join(_cargo_target, 'release', 'librustdesk.dll')
+        if not os.path.exists(dll):
             print("cargo build failed, please check rust source code.")
             exit(-1)
     os.chdir('flutter')
     system2('flutter build windows --release')
     os.chdir('..')
-    shutil.copy2('target/release/deps/dylib_virtual_display.dll',
+    # Always refresh the core DLL into the Flutter runner output (CMake install can
+    # leave a stale copy if the previous run locked librustdesk.dll).
+    shutil.copy2(os.path.join(_cargo_target, 'release', 'librustdesk.dll'),
+                 os.path.join(flutter_build_dir_2, 'librustdesk.dll'))
+    shutil.copy2(os.path.join(_cargo_target, 'release', 'deps', 'dylib_virtual_display.dll'),
                  flutter_build_dir_2)
     if skip_portable_pack:
         return
     os.chdir('libs/portable')
     system2('pip3 install -r requirements.txt')
     system2(
-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/rustdesk.exe')
+        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/betterdesk.exe')
     os.chdir('../..')
-    if os.path.exists('./rustdesk_portable.exe'):
+    if os.path.exists('./betterdesk_portable.exe'):
         os.replace('./target/release/rustdesk-portable-packer.exe',
-                   './rustdesk_portable.exe')
+                   './betterdesk_portable.exe')
     else:
         os.rename('./target/release/rustdesk-portable-packer.exe',
-                  './rustdesk_portable.exe')
+                  './betterdesk_portable.exe')
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk_portable.exe')
-    os.rename('./rustdesk_portable.exe', f'./rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/betterdesk_portable.exe')
+    os.rename('./betterdesk_portable.exe', f'./betterdesk-{version}-install.exe')
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/betterdesk-{version}-install.exe')
 
 
 def main():

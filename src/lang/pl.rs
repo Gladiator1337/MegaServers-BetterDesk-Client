@@ -170,7 +170,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Local Port", "Lokalny port"),
         ("Local Address", "Lokalny adres"),
         ("Change Local Port", "Zmień lokalny port"),
-        ("setup_server_tip", "W celu uzyskania szybszego połączenia, skorzystaj z własnego serwera połączeń."),
+        ("setup_server_tip", "Skonfiguruj serwer BetterDesk w Ustawienia → Sieć (ID / Relay / API / Key) albo zaimportuj deploy string z panelu BetterDesk."),
         ("Too short, at least 6 characters.", "Za krótkie, min. 6 znaków"),
         ("The confirmation is not identical.", "Potwierdzenie nie jest identyczne."),
         ("Permissions", "Uprawnienia"),
@@ -763,5 +763,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Lock canvas", "Zablokuj ekran"),
         ("Sync clipboard between sessions", "Synchronizuj schowek między sesjami"),
         ("sync-clipboard-between-sessions-tip", "Tekst lub obrazy skopiowane w jednej sesji zdalnej są wysyłane także do schowka pozostałych połączonych sesji."),
+        ("betterdesk_fork_attribution_tip", "BetterDesk Client jest forkiem klienta RustDesk. Odpowiedni kod źródłowy jest dostępny na licencji AGPL-3.0."),
+        ("Source code", "Kod źródłowy"),
+        ("Upstream", "Upstream"),
+        ("View license", "Zobacz licencję"),
+        ("License", "Licencja"),
     ].iter().cloned().collect();
 }

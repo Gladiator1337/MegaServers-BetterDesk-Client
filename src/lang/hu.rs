@@ -763,5 +763,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Lock canvas", "Nézet zárolása"),
         ("Sync clipboard between sessions", "Vágólap szinkronizálása a munkamenetek között"),
         ("sync-clipboard-between-sessions-tip", "Az egyik távoli munkamenetben másolt szöveg vagy kép a többi csatlakoztatott munkamenet vágólapjára is elküldésre kerül."),
+        ("betterdesk_fork_attribution_tip", ""),
+        ("Source code", ""),
+        ("Upstream", ""),
+        ("View license", ""),
+        ("License", ""),
     ].iter().cloned().collect();
 }

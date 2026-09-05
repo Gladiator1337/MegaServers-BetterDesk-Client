@@ -45,7 +45,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Local Port", "Local port"),
         ("Local Address", "Local address"),
         ("Change Local Port", "Change local port"),
-        ("setup_server_tip", "For faster connection, please set up your own server"),
+        ("setup_server_tip", "Configure your BetterDesk server in Settings → Network (ID / Relay / API / Key), or import the deploy string from the BetterDesk dashboard."),
         ("Enter Remote ID", "Enter remote ID"),
         ("Auto Login", "Auto Login (Only valid if you set \"Lock after session end\")"),
         ("Change Path", "Change path"),
@@ -189,7 +189,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("doc_fix_wayland", "https://rustdesk.com/docs/en/client/linux/#x11-required"),
         ("display_is_plugged_out_msg", "The display is plugged out, switch to the first display."),
         ("selinux_tip", "SELinux is enabled on your device, which may prevent RustDesk from running properly as controlled side."),
-        ("id_input_tip", "You can input an ID, a direct IP, or a domain with a port (<domain>:<port>).\nIf you want to access a device on another server, please append the server address (<id>@<server_address>?key=<key_value>), for example,\n9123456234@192.168.16.1:21117?key=5Qbwsde3unUcJBtrx9ZkvUmwFNoExHzpryHuPUdqlWM=.\nIf you want to access a device on a public server, please input \"<id>@public\", the key is not needed for public server.\n\nIf you want to force the use of a relay connection on the first connection, add \"/r\" at the end of the ID, for example, \"9123456234/r\"."),
+        ("id_input_tip", "You can input an ID, a direct IP, or a domain with a port (<domain>:<port>).\nIf you want to access a device on another BetterDesk server, append the server address (<id>@<server_address>?key=<key_value>), for example,\n9123456234@192.168.16.1:21117?key=<your-server-public-key>.\nPublic RustDesk servers (@public) are disabled in BetterDesk — configure Network settings instead.\n\nIf you want to force a relay connection on the first connection, add \"/r\" at the end of the ID, for example, \"9123456234/r\"."),
         ("privacy_mode_impl_mag_tip", "Mode 1"),
         ("privacy_mode_impl_virtual_display_tip", "Mode 2"),
         ("idd_not_support_under_win10_2004_tip", "Indirect display driver is not supported. Windows 10, version 2004 or newer is required."),
@@ -276,5 +276,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("whitelist_cidr_tip", "CIDR notation is supported, e.g. 192.168.1.0/24"),
         ("Your ip is blocked by the peer", "Your IP is blocked by the peer"),
         ("sync-clipboard-between-sessions-tip", "Text or images copied in one remote session are also sent to the clipboard of your other connected sessions."),
+        ("betterdesk_fork_attribution_tip", "BetterDesk Client is a fork of the RustDesk client. Corresponding source is available under AGPL-3.0."),
+        ("Source code", "Source code"),
+        ("Upstream", "Upstream"),
+        ("View license", "View license"),
+        ("License", "License"),
     ].iter().cloned().collect();
 }

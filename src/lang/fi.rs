@@ -763,5 +763,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Lock canvas", "Lukitse näkymä"),
         ("Sync clipboard between sessions", "Synkronoi leikepöytä istuntojen välillä"),
         ("sync-clipboard-between-sessions-tip", "Yhdessä etäistunnossa kopioitu teksti tai kuvat lähetetään myös muiden yhdistettyjen istuntojen leikepöydälle."),
+        ("betterdesk_fork_attribution_tip", ""),
+        ("Source code", ""),
+        ("Upstream", ""),
+        ("View license", ""),
+        ("License", ""),
     ].iter().cloned().collect();
 }

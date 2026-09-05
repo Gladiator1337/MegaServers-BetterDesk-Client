@@ -946,6 +946,13 @@ pub fn get_sysinfo() -> serde_json::Value {
         "memory": format!("{memory}GB"),
         "os": os,
         "hostname": hostname,
+        "app_name": get_app_name(),
+        "client_product": hbb_common::config::BETTERDESK_CLIENT_PRODUCT,
+        "client": hbb_common::config::BETTERDESK_CLIENT_PRODUCT,
+        "license": hbb_common::config::LICENSE_SPDX,
+        "upstream_project": hbb_common::config::UPSTREAM_PROJECT_NAME,
+        "upstream_repo": hbb_common::config::UPSTREAM_REPO_URL,
+        "source_repo": hbb_common::config::FORK_REPO_URL,
     });
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -996,69 +1003,27 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 }
 
 pub fn check_software_update() {
-    if is_custom_client() {
-        return;
-    }
-    let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
-    if config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &opt) {
-        std::thread::spawn(move || allow_err!(do_check_software_update()));
-    }
+    // BetterDesk: temporarily disable client update checks (no rustdesk.com / no auto-update).
+    *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
 }
 
-// No need to check `danger_accept_invalid_cert` for now.
-// Because the url is always `https://api.rustdesk.com/version/latest`.
+// Official BetterDesk builds do not call rustdesk.com for updates.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let (request, url) =
-        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
-    let proxy_conf = Config::get_socks();
-    let tls_url = get_url_for_tls(&url, &proxy_conf);
-    let tls_type = get_cached_tls_type(tls_url);
-    let is_tls_not_cached = tls_type.is_none();
-    let tls_type = tls_type.unwrap_or(TlsType::Rustls);
-    let client = create_http_client_async(tls_type, false);
-    let latest_release_response = match client.post(&url).json(&request).send().await {
-        Ok(resp) => {
-            upsert_tls_cache(tls_url, tls_type, false);
-            resp
-        }
-        Err(err) => {
-            if is_tls_not_cached && err.is_request() {
-                let tls_type = TlsType::NativeTls;
-                let client = create_http_client_async(tls_type, false);
-                let resp = client.post(&url).json(&request).send().await?;
-                upsert_tls_cache(tls_url, tls_type, false);
-                resp
-            } else {
-                return Err(err.into());
-            }
-        }
-    };
-    let bytes = latest_release_response.bytes().await?;
-    let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
-    let response_url = resp.url;
-    let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
-
-    if get_version_number(&latest_release_version) > get_version_number(crate::VERSION) {
-        #[cfg(feature = "flutter")]
-        {
-            let mut m = HashMap::new();
-            m.insert("name", "check_software_update_finish");
-            m.insert("url", &response_url);
-            if let Ok(data) = serde_json::to_string(&m) {
-                let _ = crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, data);
-            }
-        }
-        *SOFTWARE_UPDATE_URL.lock().unwrap() = response_url;
-    } else {
-        *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
-    }
+    // BetterDesk: temporarily disable client update checks.
+    *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
     Ok(())
 }
 
 #[inline]
 pub fn get_app_name() -> String {
     hbb_common::config::APP_NAME.read().unwrap().clone()
+}
+
+/// Executable / process stem (`betterdesk`), not the display name.
+#[inline]
+pub fn get_exe_name() -> String {
+    hbb_common::config::EXE_NAME.to_owned()
 }
 
 #[inline]
@@ -1068,7 +1033,7 @@ pub fn is_rustdesk() -> bool {
 
 #[inline]
 pub fn get_uri_prefix() -> String {
-    format!("{}://", get_app_name().to_lowercase())
+    format!("{}://", hbb_common::config::URI_SCHEME)
 }
 
 #[cfg(target_os = "macos")]
@@ -1129,7 +1094,7 @@ fn get_api_server_(api: String, custom: String) -> String {
         return api.to_owned();
     }
     let s0 = get_custom_rendezvous_server(custom);
-    if !s0.is_empty() {
+        if !s0.is_empty() {
         let s = crate::increase_port(&s0, -2);
         if s == s0 {
             return format!("http://{}:{}", s, config::RENDEZVOUS_PORT - 2);
@@ -1137,7 +1102,8 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.rustdesk.com".to_owned()
+    // BetterDesk: never fall back to public admin.rustdesk.com
+    "".to_owned()
 }
 
 #[inline]
@@ -1927,14 +1893,15 @@ pub async fn get_key(sync: bool) -> String {
     #[cfg(target_os = "ios")]
     let mut key = Config::get_option("key");
     #[cfg(not(target_os = "ios"))]
-    let mut key = if sync {
+    let key = if sync {
         Config::get_option("key")
     } else {
         let mut options = crate::ipc::get_options_async().await;
         options.remove("key").unwrap_or_default()
     };
     if key.is_empty() {
-        key = config::RS_PUB_KEY.to_owned();
+        // BetterDesk: never fall back to public RS_PUB_KEY; require Network / custom.txt / deploy key
+        return key;
     }
     key
 }
@@ -2295,21 +2262,42 @@ pub fn get_dst_align_rgba() -> usize {
 }
 
 pub fn read_custom_client(config: &str) {
+    let config = config.trim();
+    if config.is_empty() {
+        return;
+    }
+    // Generator Phase A / lab: plain JSON custom.txt (no signature).
+    if config.starts_with('{') {
+        apply_custom_client_map(config.as_bytes());
+        return;
+    }
     let Ok(data) = decode64(config) else {
         log::error!("Failed to decode custom client config");
         return;
     };
-    const KEY: &str = "5Qbwsde3unUcJBtrx9ZkvUmwFNoExHzpryHuPUdqlWM=";
-    let Some(pk) = get_rs_pk(KEY) else {
+    // Prefer BetterDesk OEM pubkey (res/betterdesk/custom-client-signing.pub).
+    // Generate with scripts/generate_custom_client_signing_key.py for the panel Generator.
+    const BETTERDESK_KEY: &str =
+        include_str!("../res/betterdesk/custom-client-signing.pub");
+    let key = BETTERDESK_KEY.trim();
+    if key.is_empty() {
+        log::error!("BetterDesk custom-client signing public key is empty; use plain JSON custom.txt or generate keys");
+        return;
+    }
+    let Some(pk) = get_rs_pk(key) else {
         log::error!("Failed to parse public key of custom client");
         return;
     };
     let Ok(data) = sign::verify(&data, &pk) else {
-        log::error!("Failed to dec custom client config");
+        log::error!("Failed to verify custom client config signature");
         return;
     };
+    apply_custom_client_map(&data);
+}
+
+fn apply_custom_client_map(data: &[u8]) {
     let Ok(mut data) =
-        serde_json::from_slice::<std::collections::HashMap<String, serde_json::Value>>(&data)
+        serde_json::from_slice::<std::collections::HashMap<String, serde_json::Value>>(data)
     else {
         log::error!("Failed to parse custom client config");
         return;

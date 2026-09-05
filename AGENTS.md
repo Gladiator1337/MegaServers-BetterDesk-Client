@@ -1,5 +1,17 @@
 # RustDesk Guide
 
+## BetterDesk / scope
+
+- This tree is the full RustDesk **client** fork branded as **BetterDesk** (desktop + mobile + web). Do not delete platform trees.
+- **License:** AGPL-3.0 — see `LICENSE`. About UI and sysinfo must keep upstream RustDesk attribution + source repo links ([docs/OFFICIAL_CLIENT.md](docs/OFFICIAL_CLIENT.md)).
+- **Active work:** desktop Flutter on **Windows** and **Linux** (`flutter/lib/desktop/`, `flutter/windows/`, `flutter/linux/`, Rust `src/` + `libs/`).
+- Mobile (`flutter/android`, `flutter/ios`, `flutter/lib/mobile/`) and web stay in-tree; do not refactor them unless asked.
+- Desktop build setup (tool versions, env checks, smoke-build): [docs/BUILD_DESKTOP.md](docs/BUILD_DESKTOP.md).
+- Connection model (BetterDesk / P2P / LAN / API): [docs/CONNECTIVITY.md](docs/CONNECTIVITY.md).
+- Official BetterDesk client (no public rustdesk.com, Generator bake-in): [docs/OFFICIAL_CLIENT.md](docs/OFFICIAL_CLIENT.md).
+- Client API layers (HTTP / FFI / IPC): [docs/CLIENT_API.md](docs/CLIENT_API.md).
+- Required submodule: `git submodule update --init --recursive` for `libs/hbb_common`.
+
 ## Project Layout
 
 ### Directory Structure

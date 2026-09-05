@@ -1,0 +1,9 @@
+{
+  "app-name": "BetterDesk Client",
+  "default-settings": {
+    "custom-rendezvous-server": "desk.example.com",
+    "relay-server": "desk.example.com",
+    "api-server": "http://desk.example.com:21114",
+    "key": "REPLACE_WITH_id_ed25519.pub_CONTENTS"
+  }
+}

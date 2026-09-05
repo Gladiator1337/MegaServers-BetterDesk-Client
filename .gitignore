@@ -4,6 +4,8 @@
 .idea
 .DS_Store
 .env
+res/betterdesk/custom-client-signing.seed
+*.seed
 libsciter-gtk.so
 src/ui/inline.rs
 extractor

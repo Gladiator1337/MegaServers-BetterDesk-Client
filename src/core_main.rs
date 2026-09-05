@@ -33,6 +33,7 @@ pub fn core_main() -> Option<Vec<String>> {
         return None;
     }
     crate::load_custom_client();
+    crate::hbbs_http::betterdesk::log_client_identity();
     #[cfg(windows)]
     if !crate::platform::windows::bootstrap() {
         // return None to terminate the process
@@ -400,7 +401,7 @@ pub fn core_main() -> Option<Vec<String>> {
                 hbb_common::allow_err!(crate::platform::check_autostart_config());
                 std::process::Command::new("pkill")
                     .arg("-f")
-                    .arg(&format!("{} --tray", crate::get_app_name().to_lowercase()))
+                    .arg(&format!("{} --tray", crate::get_exe_name()))
                     .status()
                     .ok();
                 hbb_common::allow_err!(crate::run_me(vec!["--tray"]));

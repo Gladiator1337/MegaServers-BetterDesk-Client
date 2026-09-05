@@ -2437,7 +2437,15 @@ class _AboutState extends State<_About> {
       final scrollController = ScrollController();
       return SingleChildScrollView(
         controller: scrollController,
-        child: _Card(title: translate('About RustDesk'), children: [
+        child: _Card(
+            title: 'About',
+            title_suffix: [
+              Text(
+                ' $kBetterDeskDisplayName',
+                style: const TextStyle(fontSize: _kTitleFontSize),
+              ),
+            ],
+            children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2457,17 +2465,51 @@ class _AboutState extends State<_About> {
               SelectionArea(
                   child: Text('${translate('ID')}: $myId')
                       .marginSymmetric(vertical: 4.0)),
+              SelectionArea(
+                  child: Text(
+                '${translate('License')}: $kBetterDeskLicenseName ($kBetterDeskLicenseSpdx)',
+              ).marginSymmetric(vertical: 4.0)),
+              const SizedBox(height: 8.0),
+              SelectionArea(
+                  child: Text(
+                () {
+                  final tip = translate('betterdesk_fork_attribution_tip');
+                  if (tip == 'betterdesk_fork_attribution_tip' || tip.isEmpty) {
+                    return localeName.startsWith('pl')
+                        ? kBetterDeskForkAttributionTipPl
+                        : kBetterDeskForkAttributionTip;
+                  }
+                  return tip;
+                }(),
+              ).marginSymmetric(vertical: 4.0)),
               InkWell(
                   onTap: () {
-                    launchUrlString('https://rustdesk.com/privacy.html');
+                    launchUrlString(kBetterDeskClientRepoUrl);
                   },
                   child: Text(
-                    translate('Privacy Statement'),
+                    '${translate('Source code')}: $kBetterDeskClientRepoUrl',
                     style: linkStyle,
                   ).marginSymmetric(vertical: 4.0)),
               InkWell(
                   onTap: () {
-                    launchUrlString('https://rustdesk.com');
+                    launchUrlString(kUpstreamRepoUrl);
+                  },
+                  child: Text(
+                    '${translate('Upstream')} ($kUpstreamProjectName): $kUpstreamRepoUrl',
+                    style: linkStyle,
+                  ).marginSymmetric(vertical: 4.0)),
+              InkWell(
+                  onTap: () {
+                    launchUrlString(
+                        'https://www.gnu.org/licenses/agpl-3.0.html');
+                  },
+                  child: Text(
+                    translate('View license'),
+                    style: linkStyle,
+                  ).marginSymmetric(vertical: 4.0)),
+              InkWell(
+                  onTap: () {
+                    launchUrlString(kBetterDeskClientRepoUrl);
                   },
                   child: Text(
                     translate('Website'),
@@ -2485,7 +2527,10 @@ class _AboutState extends State<_About> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Copyright © ${DateTime.now().toString().substring(0, 4)} Purslane Tech Pte. Ltd.\n$license',
+                            'Copyright © ${DateTime.now().toString().substring(0, 4)} UNITRONIX\n'
+                            'Based on $kUpstreamProjectName — Copyright © Purslane Ltd. / RustDesk contributors\n'
+                            'Licensed under $kBetterDeskLicenseSpdx\n'
+                            '${license.isEmpty ? '' : license}',
                             style: const TextStyle(color: Colors.white),
                           ),
                           Text(
