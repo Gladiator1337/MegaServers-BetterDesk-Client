@@ -110,6 +110,11 @@ const String kOptionBrandingPhone = "branding-phone";
 const String kOptionBrandingEmail = "branding-email";
 const String kOptionBrandingWebsite = "branding-website";
 const String kOptionBrandingLogo = "branding-logo";
+const String kOptionBrandingSource = "branding-source";
+const String kOptionBrandingRevision = "branding-revision";
+const String kOptionBrandingAccentColor = "branding-accent-color";
+const String kOptionBrandingLogoPath = "branding-logo-path";
+const String kBrandingSourceServer = "server";
 const String kOptionAccessMode = "access-mode";
 const String kOptionEnableKeyboard = "enable-keyboard";
 // "Settings -> Security -> Permissions"

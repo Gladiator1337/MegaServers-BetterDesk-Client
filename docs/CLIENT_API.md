@@ -120,6 +120,7 @@ Auth konta / AB: zwykle `Authorization: Bearer {access_token}` z `LocalConfig`.
 | `/api/devices/deploy` | [`ui_interface.rs`](../src/ui_interface.rs) | token deploy | wdrożenie urządzenia |
 | `/api/devices/cli` | [`core_main.rs`](../src/core_main.rs) | CLI deploy | helper |
 | `/api/audit/{type}` | [`common.rs`](../src/common.rs) `get_audit_server` | tylko nie-public | audit POST |
+| `/api/branding` | [`betterdesk.rs`](../src/hbbs_http/betterdesk.rs) | publiczne (GET), bez loginu | Client Branding sync → LocalConfig `branding-*` |
 
 ### 4.4. Endpointy — Flutter (konto / AB / grupy)
 

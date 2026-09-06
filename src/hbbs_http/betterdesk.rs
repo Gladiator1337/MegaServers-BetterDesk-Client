@@ -3,7 +3,19 @@
 //! Extension point for branding / health probes and future panel Generator
 //! + enrollment features. Base URL comes from configured `api-server`.
 
-use hbb_common::{bail, config, log, ResultType};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
+use hbb_common::{
+    bail, config,
+    config::{keys, Config, LocalConfig},
+    log, ResultType,
+};
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::create_http_client_async_with_url;
@@ -11,10 +23,23 @@ use super::create_http_client_async_with_url;
 /// Product marker sent in sysinfo / future API bodies.
 pub const CLIENT_PRODUCT: &str = config::BETTERDESK_CLIENT_PRODUCT;
 
+const OPTION_BRANDING_SOURCE: &str = "branding-source";
+const OPTION_BRANDING_REVISION: &str = "branding-revision";
+const OPTION_BRANDING_ACCENT: &str = "branding-accent-color";
+const OPTION_BRANDING_LOGO_PATH: &str = "branding-logo-path";
+const OPTION_BRANDING_SYNCED_API: &str = "branding-synced-api";
+const BRANDING_SOURCE_SERVER: &str = "server";
+const BRANDING_LOGO_MAX_BYTES: usize = 512 * 1024;
+const BRANDING_POLL_INTERVAL: Duration = Duration::from_secs(60);
+
+lazy_static::lazy_static! {
+    static ref LAST_BRANDING_POLL: Mutex<Option<Instant>> = Mutex::new(None);
+}
+
 fn api_base() -> String {
     let api = crate::get_api_server(
-        config::Config::get_option("api-server"),
-        config::Config::get_option("custom-rendezvous-server"),
+        Config::get_option("api-server"),
+        Config::get_option("custom-rendezvous-server"),
     );
     api.trim_end_matches('/').to_owned()
 }
@@ -85,4 +110,343 @@ pub fn log_client_identity() {
         CLIENT_PRODUCT,
         crate::get_app_name()
     );
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct BrandingLogoPayload {
+    #[serde(default)]
+    mime: String,
+    #[serde(default)]
+    data_base64: String,
+    #[serde(default)]
+    url: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct BrandingPayload {
+    #[serde(default)]
+    revision: String,
+    #[serde(default)]
+    company_name: String,
+    #[serde(default)]
+    phone: String,
+    #[serde(default)]
+    email: String,
+    #[serde(default)]
+    website: String,
+    #[serde(default)]
+    accent_color: String,
+    #[serde(default)]
+    support_contact: String,
+    #[serde(default)]
+    logo: Option<BrandingLogoPayload>,
+}
+
+fn is_server_managed() -> bool {
+    LocalConfig::get_option(OPTION_BRANDING_SOURCE) == BRANDING_SOURCE_SERVER
+}
+
+fn notify_branding_updated() {
+    #[cfg(feature = "flutter")]
+    {
+        let event = serde_json::json!({
+            "name": "client_branding",
+            "action": "updated",
+        });
+        let _ = crate::flutter::push_global_event(
+            crate::flutter::APP_TYPE_MAIN,
+            event.to_string(),
+        );
+    }
+}
+
+fn clear_server_logo_files() {
+    let path = LocalConfig::get_option(OPTION_BRANDING_LOGO_PATH);
+    if !path.is_empty() {
+        let _ = fs::remove_file(&path);
+    }
+    // Best-effort cleanup of previous server logo variants in config dir.
+    let probe = Config::path("betterdesk_branding_logo_server_probe");
+    if let Some(dir) = probe.parent() {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("betterdesk_branding_logo_server") {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+}
+
+/// Clear branding previously applied from the BetterDesk API (not manual local branding).
+pub fn clear_server_branding() {
+    if !is_server_managed() {
+        LocalConfig::set_option(OPTION_BRANDING_SYNCED_API.to_owned(), "".to_owned());
+        LocalConfig::set_option(OPTION_BRANDING_REVISION.to_owned(), "".to_owned());
+        return;
+    }
+    clear_server_logo_files();
+    LocalConfig::set_option(keys::OPTION_BRANDING_COMPANY_NAME.to_owned(), "".to_owned());
+    LocalConfig::set_option(keys::OPTION_BRANDING_PHONE.to_owned(), "".to_owned());
+    LocalConfig::set_option(keys::OPTION_BRANDING_EMAIL.to_owned(), "".to_owned());
+    LocalConfig::set_option(keys::OPTION_BRANDING_WEBSITE.to_owned(), "".to_owned());
+    LocalConfig::set_option(keys::OPTION_BRANDING_LOGO.to_owned(), "".to_owned());
+    LocalConfig::set_option(OPTION_BRANDING_LOGO_PATH.to_owned(), "".to_owned());
+    LocalConfig::set_option(OPTION_BRANDING_ACCENT.to_owned(), "".to_owned());
+    LocalConfig::set_option(OPTION_BRANDING_SOURCE.to_owned(), "".to_owned());
+    LocalConfig::set_option(OPTION_BRANDING_REVISION.to_owned(), "".to_owned());
+    LocalConfig::set_option(OPTION_BRANDING_SYNCED_API.to_owned(), "".to_owned());
+    notify_branding_updated();
+    log::info!("cleared server-managed BetterDesk branding");
+}
+
+fn logo_ext_from_mime(mime: &str) -> &'static str {
+    match mime.to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        _ => "png",
+    }
+}
+
+fn write_logo_payload(logo: &BrandingLogoPayload) -> ResultType<PathBuf> {
+    if logo.data_base64.is_empty() {
+        bail!("logo payload empty");
+    }
+    let mime = logo.mime.to_ascii_lowercase();
+    if !matches!(
+        mime.as_str(),
+        "image/png" | "image/jpeg" | "image/jpg" | "image/webp"
+    ) {
+        bail!("unsupported logo mime");
+    }
+    let raw = crate::decode64(logo.data_base64.trim())
+        .map_err(|_| hbb_common::anyhow::anyhow!("invalid logo base64"))?;
+    if raw.is_empty() || raw.len() > BRANDING_LOGO_MAX_BYTES {
+        bail!("logo size out of range");
+    }
+    clear_server_logo_files();
+    let ext = logo_ext_from_mime(&mime);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = Config::path(format!("betterdesk_branding_logo_server_{stamp}.{ext}"));
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(&path, raw)?;
+    Ok(path)
+}
+
+async fn download_logo_url(url: &str) -> ResultType<PathBuf> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        bail!("logo url must be http(s)");
+    }
+    let client = create_http_client_async_with_url(url).await;
+    let resp = client.get(url).send().await?;
+    if !resp.status().is_success() {
+        bail!("logo download failed: HTTP {}", resp.status());
+    }
+    let mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/png")
+        .split(';')
+        .next()
+        .unwrap_or("image/png")
+        .trim()
+        .to_owned();
+    let bytes = resp.bytes().await?;
+    if bytes.is_empty() || bytes.len() > BRANDING_LOGO_MAX_BYTES {
+        bail!("logo size out of range");
+    }
+    let payload = BrandingLogoPayload {
+        mime,
+        data_base64: crate::encode64(&bytes),
+        url: String::new(),
+    };
+    write_logo_payload(&payload)
+}
+
+fn apply_text_fields(payload: &BrandingPayload) {
+    let company = payload.company_name.trim();
+    // Prefer explicit website; fall back to support_contact when it looks like a URL.
+    let website = {
+        let w = payload.website.trim();
+        if !w.is_empty() {
+            w.to_owned()
+        } else {
+            let s = payload.support_contact.trim();
+            if s.starts_with("http://") || s.starts_with("https://") {
+                s.to_owned()
+            } else {
+                String::new()
+            }
+        }
+    };
+    LocalConfig::set_option(
+        keys::OPTION_BRANDING_COMPANY_NAME.to_owned(),
+        company.to_owned(),
+    );
+    LocalConfig::set_option(
+        keys::OPTION_BRANDING_PHONE.to_owned(),
+        payload.phone.trim().to_owned(),
+    );
+    LocalConfig::set_option(
+        keys::OPTION_BRANDING_EMAIL.to_owned(),
+        payload.email.trim().to_owned(),
+    );
+    LocalConfig::set_option(keys::OPTION_BRANDING_WEBSITE.to_owned(), website);
+    LocalConfig::set_option(
+        OPTION_BRANDING_ACCENT.to_owned(),
+        payload.accent_color.trim().to_owned(),
+    );
+}
+
+async fn apply_branding_payload(base: &str, payload: BrandingPayload) -> ResultType<()> {
+    let revision = payload.revision.trim();
+    // revision "0"/empty means operator never saved Client Branding — do not lock UI.
+    if revision.is_empty() || revision == "0" {
+        if is_server_managed() {
+            clear_server_branding();
+        }
+        LocalConfig::set_option(OPTION_BRANDING_SYNCED_API.to_owned(), base.to_owned());
+        LocalConfig::set_option(OPTION_BRANDING_REVISION.to_owned(), "0".to_owned());
+        return Ok(());
+    }
+
+    let empty_profile = payload.company_name.trim().is_empty()
+        && payload.phone.trim().is_empty()
+        && payload.email.trim().is_empty()
+        && payload.website.trim().is_empty()
+        && payload
+            .logo
+            .as_ref()
+            .map(|l| l.data_base64.is_empty() && l.url.is_empty())
+            .unwrap_or(true);
+    if empty_profile {
+        if is_server_managed() {
+            clear_server_branding();
+        }
+        LocalConfig::set_option(OPTION_BRANDING_SYNCED_API.to_owned(), base.to_owned());
+        LocalConfig::set_option(OPTION_BRANDING_REVISION.to_owned(), revision.to_owned());
+        return Ok(());
+    }
+
+    apply_text_fields(&payload);
+
+    let mut has_logo = false;
+    if let Some(logo) = payload.logo.as_ref() {
+        if !logo.data_base64.is_empty() {
+            match write_logo_payload(logo) {
+                Ok(path) => {
+                    LocalConfig::set_option(
+                        OPTION_BRANDING_LOGO_PATH.to_owned(),
+                        path.to_string_lossy().to_string(),
+                    );
+                    LocalConfig::set_option(keys::OPTION_BRANDING_LOGO.to_owned(), "Y".to_owned());
+                    has_logo = true;
+                }
+                Err(err) => log::warn!("branding logo write failed: {err}"),
+            }
+        } else if !logo.url.is_empty() {
+            match download_logo_url(&logo.url).await {
+                Ok(path) => {
+                    LocalConfig::set_option(
+                        OPTION_BRANDING_LOGO_PATH.to_owned(),
+                        path.to_string_lossy().to_string(),
+                    );
+                    LocalConfig::set_option(keys::OPTION_BRANDING_LOGO.to_owned(), "Y".to_owned());
+                    has_logo = true;
+                }
+                Err(err) => log::warn!("branding logo download failed: {err}"),
+            }
+        }
+    }
+    if !has_logo {
+        clear_server_logo_files();
+        LocalConfig::set_option(OPTION_BRANDING_LOGO_PATH.to_owned(), "".to_owned());
+        LocalConfig::set_option(keys::OPTION_BRANDING_LOGO.to_owned(), "".to_owned());
+    }
+
+    LocalConfig::set_option(
+        OPTION_BRANDING_SOURCE.to_owned(),
+        BRANDING_SOURCE_SERVER.to_owned(),
+    );
+    LocalConfig::set_option(
+        OPTION_BRANDING_REVISION.to_owned(),
+        payload.revision.clone(),
+    );
+    LocalConfig::set_option(OPTION_BRANDING_SYNCED_API.to_owned(), base.to_owned());
+    notify_branding_updated();
+    log::info!(
+        "applied BetterDesk server branding revision={}",
+        payload.revision
+    );
+    Ok(())
+}
+
+/// Called from the hbbs sync loop: fetch and apply Client Branding when API is configured.
+pub async fn sync_client_branding() {
+    let base = api_base();
+    if base.is_empty() || crate::is_public(&base) {
+        if is_server_managed() {
+            clear_server_branding();
+        } else {
+            LocalConfig::set_option(OPTION_BRANDING_SYNCED_API.to_owned(), "".to_owned());
+            LocalConfig::set_option(OPTION_BRANDING_REVISION.to_owned(), "".to_owned());
+        }
+        return;
+    }
+
+    let synced = LocalConfig::get_option(OPTION_BRANDING_SYNCED_API);
+    if !synced.is_empty() && synced != base {
+        // API host changed — drop previous server branding.
+        clear_server_branding();
+    }
+
+    {
+        let mut last = LAST_BRANDING_POLL.lock().unwrap();
+        if let Some(t) = *last {
+            if t.elapsed() < BRANDING_POLL_INTERVAL {
+                return;
+            }
+        }
+        *last = Some(Instant::now());
+    }
+
+    let value = match fetch_branding().await {
+        Ok(v) => v,
+        Err(err) => {
+            log::debug!("branding fetch skipped: {err}");
+            return;
+        }
+    };
+    let payload: BrandingPayload = match serde_json::from_value(value) {
+        Ok(p) => p,
+        Err(err) => {
+            log::warn!("branding payload parse failed: {err}");
+            return;
+        }
+    };
+    let local_rev = LocalConfig::get_option(OPTION_BRANDING_REVISION);
+    if !payload.revision.is_empty()
+        && payload.revision == local_rev
+        && synced == base
+        && is_server_managed()
+    {
+        return;
+    }
+    if let Err(err) = apply_branding_payload(&base, payload).await {
+        log::warn!("branding apply failed: {err}");
+    }
+}
+
+/// Whether Settings → Branding should be read-only (managed by server).
+#[allow(dead_code)]
+pub fn is_branding_managed_by_server() -> bool {
+    is_server_managed()
 }

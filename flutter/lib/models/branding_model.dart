@@ -42,6 +42,13 @@ class BrandingModel {
 
   bool get hasBranding => hasCompanyName || hasContactOrLogo;
 
+  bool get isManagedByServer =>
+      bind.mainGetLocalOption(key: kOptionBrandingSource) ==
+      kBrandingSourceServer;
+
+  String get managedRevision =>
+      bind.mainGetLocalOption(key: kOptionBrandingRevision);
+
   void load() {
     companyName.value =
         bind.mainGetLocalOption(key: kOptionBrandingCompanyName);
@@ -54,6 +61,7 @@ class BrandingModel {
         if (p != null && File(p).existsSync()) {
           logoPath.value = p;
           hasLogo.value = true;
+          logoEpoch.value++;
         } else {
           logoPath.value = '';
           hasLogo.value = false;
@@ -65,13 +73,11 @@ class BrandingModel {
     }
   }
 
-  bool _isBrandingLogoFile(String filePath) {
-    final name = path.basename(filePath);
-    if (!name.startsWith(kBrandingLogoFileName)) return false;
-    return _brandingLogoExts.contains(path.extension(name).toLowerCase());
-  }
-
   Future<String?> _resolveLogoPath() async {
+    final managedPath = bind.mainGetLocalOption(key: kOptionBrandingLogoPath);
+    if (managedPath.isNotEmpty && File(managedPath).existsSync()) {
+      return managedPath;
+    }
     final dir = await getApplicationSupportDirectory();
     if (!await dir.exists()) return null;
     File? newest;
@@ -86,6 +92,12 @@ class BrandingModel {
       }
     }
     return newest?.path;
+  }
+
+  bool _isBrandingLogoFile(String filePath) {
+    final name = path.basename(filePath);
+    if (!name.startsWith(kBrandingLogoFileName)) return false;
+    return _brandingLogoExts.contains(path.extension(name).toLowerCase());
   }
 
   void _evictLogoImage(String filePath) {

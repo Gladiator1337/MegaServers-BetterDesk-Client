@@ -40,6 +40,20 @@ Deploy string = `reverse(base64({host,relay,api,key}))` — ten sam format co st
 
 Helper HTTP: [`src/hbbs_http/betterdesk.rs`](../src/hbbs_http/betterdesk.rs) (`/api/health`, `/api/branding`, `/api/server-key`).
 
+## Client Branding (runtime, z API)
+
+Po poprawnej konfiguracji Network (`api-server`) oficjalny klient **automatycznie** pobiera branding z publicznego `GET {api}/api/branding` (bez loginu konta, bez specjalnych uprawnień).
+
+| Zachowanie | Szczegóły |
+|------------|-----------|
+| Trigger | pętla `hbbs_http::sync` (po heartbeat / gdy API skonfigurowane) |
+| Persist | LocalConfig `branding-*` + plik logo; `branding-source=server` |
+| Clear | gdy usunięto/zmieniono `api-server`, albo serwer ma `revision=0` (nigdy nie zapisano w panelu) |
+| UI | Settings → Branding w trybie managed (read-only) gdy `branding-source=server` |
+| Stock RustDesk | **nie** woła `/api/branding`; dostaje tylko bezpieczny podzbiór przez heartbeat `strategy.config_options` (np. `display-name`) |
+
+Źródło prawdy edytuje panel: **Main → Client Branding** (nie Settings → Branding konsoli). Kontrakt: `schema_version`, `revision`, pola firmy/kontaktu/logo, `profiles.betterdesk` / `profiles.rustdesk`.
+
 ## Attribution / licencja (AGPL-3.0)
 
 BetterDesk Client **jest forkiem klienta RustDesk**. W Settings → About oraz w sysinfo:

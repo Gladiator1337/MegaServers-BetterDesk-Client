@@ -776,6 +776,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Choose logo", ""),
         ("Remove logo", ""),
         ("Save branding", ""),
+        ("Managed by BetterDesk server", ""),
         ("Clear branding", ""),
         ("Logo too large", ""),
         ("Invalid logo format", ""),

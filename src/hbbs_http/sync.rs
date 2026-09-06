@@ -98,6 +98,7 @@ async fn start_hbbs_sync_async() {
                 let id = Config::get_id();
                 if url.is_empty() {
                     *PRO.lock().unwrap() = false;
+                    crate::hbbs_http::betterdesk::sync_client_branding().await;
                     continue;
                 }
                 if config::option2bool("stop-service", &Config::get_option("stop-service")) {
@@ -268,6 +269,7 @@ async fn start_hbbs_sync_async() {
                         }
                     }
                 }
+                crate::hbbs_http::betterdesk::sync_client_branding().await;
             }
         }
     }

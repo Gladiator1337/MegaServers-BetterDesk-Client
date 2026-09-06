@@ -28,6 +28,7 @@ import 'consts.dart';
 import 'mobile/pages/home_page.dart';
 import 'mobile/pages/server_page.dart';
 import 'mobile/widgets/deploy_dialog.dart';
+import 'models/branding_model.dart';
 import 'models/platform_model.dart';
 
 /// Basic window and launch properties.
@@ -563,6 +564,12 @@ _registerEventHandler() {
     });
     platformFFI.registerEventHandler('language', 'language', (_) async {
       reloadAllWindows();
+    });
+  }
+  if (isDesktop && desktopType == DesktopType.main) {
+    platformFFI.registerEventHandler(
+        'client_branding', 'client_branding', (_) async {
+      BrandingModel.current.load();
     });
   }
   if (isAndroid) {

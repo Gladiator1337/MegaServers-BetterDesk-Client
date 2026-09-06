@@ -2450,11 +2450,10 @@ class _BrandingState extends State<_Branding> {
     super.dispose();
   }
 
-  bool get _logoFixed => isOptionFixed(kOptionBrandingLogo);
-
   Widget _field(String label, String optionKey, TextEditingController controller,
       {String? hint}) {
-    final fixed = isOptionFixed(optionKey);
+    final fixed =
+        isOptionFixed(optionKey) || BrandingModel.current.isManagedByServer;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2474,6 +2473,10 @@ class _BrandingState extends State<_Branding> {
       ],
     );
   }
+
+  bool get _logoFixed =>
+      isOptionFixed(kOptionBrandingLogo) ||
+      BrandingModel.current.isManagedByServer;
 
   Widget _logoSection() {
     final branding = BrandingModel.current;
@@ -2590,29 +2593,40 @@ class _BrandingState extends State<_Branding> {
   @override
   Widget build(BuildContext context) {
     final scrollController = ScrollController();
+    final managed = BrandingModel.current.isManagedByServer;
     return ListView(
       controller: scrollController,
       children: [
         _Card(title: 'Branding', children: [
+          if (managed)
+            Text(
+              translate('Managed by BetterDesk server'),
+              style: TextStyle(
+                fontSize: _kContentFontSize,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ).marginOnly(
+                left: _kContentHMargin, right: _kContentHMargin, bottom: 10),
           _field('Company name', kOptionBrandingCompanyName, _companyController),
           _logoSection(),
           _field('Phone', kOptionBrandingPhone, _phoneController),
           _field('Email', kOptionBrandingEmail, _emailController),
           _field('Website', kOptionBrandingWebsite, _websiteController,
               hint: 'https://'),
-          Row(
-            children: [
-              ElevatedButton(
-                onPressed: _onSave,
-                child: Text(translate('Save branding')),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _onClear,
-                child: Text(translate('Clear branding')),
-              ),
-            ],
-          ).marginOnly(left: _kContentHMargin, top: 6),
+          if (!managed)
+            Row(
+              children: [
+                ElevatedButton(
+                  onPressed: _onSave,
+                  child: Text(translate('Save branding')),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _onClear,
+                  child: Text(translate('Clear branding')),
+                ),
+              ],
+            ).marginOnly(left: _kContentHMargin, top: 6),
         ]),
         const SizedBox(height: _kListViewBottomMargin),
       ],
