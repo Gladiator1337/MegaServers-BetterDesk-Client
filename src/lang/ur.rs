@@ -146,7 +146,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Failed to make direct connection to remote desktop", "ریموٹ ڈیسکٹاپ سے مستقیم کنکشن قائم کرنے میں ناکام"),
         ("Set Password", "پاس ورڈ مرتب کریں"),
         ("OS Password", "OS پاس ورڈ"),
-        ("install_tip", "انسٹال کرنے کا مشورہ"),
+        ("install_tip", "UAC کی وجہ سے قابلِ اعتماد ریموٹ رسائی کے لیے BetterDesk Client سسٹم میں انسٹال کریں۔"),
         ("Click to upgrade", "اپگریڈ کرنے کے لئے کلک کریں"),
         ("Configure", "ترتیب دینا"),
         ("config_acc", ""),
@@ -750,6 +750,17 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Upstream", ""),
         ("View license", ""),
         ("License", ""),
+        ("Branding", ""),
+        ("Company name", ""),
+        ("Company logo", ""),
+        ("Phone", ""),
+        ("Email", ""),
+        ("Choose logo", ""),
+        ("Remove logo", ""),
+        ("Save branding", ""),
+        ("Clear branding", ""),
+        ("Logo too large", ""),
+        ("Invalid logo format", ""),
     ].iter().cloned().collect();
 }
 

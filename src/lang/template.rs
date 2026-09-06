@@ -768,5 +768,16 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Upstream", ""),
         ("View license", ""),
         ("License", ""),
+        ("Branding", ""),
+        ("Company name", ""),
+        ("Company logo", ""),
+        ("Phone", ""),
+        ("Email", ""),
+        ("Choose logo", ""),
+        ("Remove logo", ""),
+        ("Save branding", ""),
+        ("Clear branding", ""),
+        ("Logo too large", ""),
+        ("Invalid logo format", ""),
     ].iter().cloned().collect();
 }

@@ -105,6 +105,11 @@ const String kOptionAllowAutoRecordIncoming = "allow-auto-record-incoming";
 const String kOptionAllowAutoRecordOutgoing = "allow-auto-record-outgoing";
 const String kOptionHideRecordingButton = "hide-recording-button";
 const String kOptionVideoSaveDirectory = "video-save-directory";
+const String kOptionBrandingCompanyName = "branding-company-name";
+const String kOptionBrandingPhone = "branding-phone";
+const String kOptionBrandingEmail = "branding-email";
+const String kOptionBrandingWebsite = "branding-website";
+const String kOptionBrandingLogo = "branding-logo";
 const String kOptionAccessMode = "access-mode";
 const String kOptionEnableKeyboard = "enable-keyboard";
 // "Settings -> Security -> Permissions"

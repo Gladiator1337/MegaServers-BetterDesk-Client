@@ -13,6 +13,7 @@ import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
 import 'package:flutter_hbb/mobile/widgets/dialog.dart';
+import 'package:flutter_hbb/models/branding_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/printer_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
@@ -55,6 +56,7 @@ enum SettingsTabKey {
   display,
   account,
   printer,
+  branding,
   about,
 }
 
@@ -77,6 +79,7 @@ class DesktopSettingPage extends StatefulWidget {
         !bind.isDisableSettings() &&
         bind.mainGetBuildinOption(key: kOptionHideRemotePrinterSetting) != 'Y')
       SettingsTabKey.printer,
+    if (!bind.isDisableSettings()) SettingsTabKey.branding,
     SettingsTabKey.about,
   ];
 
@@ -208,6 +211,10 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
           settingTabs
               .add(_TabInfo(tab, 'Printer', Icons.print_outlined, Icons.print));
           break;
+        case SettingsTabKey.branding:
+          settingTabs.add(_TabInfo(
+              tab, 'Branding', Icons.business_outlined, Icons.business));
+          break;
         case SettingsTabKey.about:
           settingTabs
               .add(_TabInfo(tab, 'About', Icons.info_outline, Icons.info));
@@ -238,6 +245,9 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
           break;
         case SettingsTabKey.printer:
           children.add(const _Printer());
+          break;
+        case SettingsTabKey.branding:
+          children.add(const _Branding());
           break;
         case SettingsTabKey.about:
           children.add(const _About());
@@ -2401,6 +2411,209 @@ class __PrinterState extends State<_Printer> {
         enabled: printerOptions.action != kValuePrinterIncomingJobDismiss,
       )
     ]);
+  }
+}
+
+class _Branding extends StatefulWidget {
+  const _Branding({Key? key}) : super(key: key);
+
+  @override
+  State<_Branding> createState() => _BrandingState();
+}
+
+class _BrandingState extends State<_Branding> {
+  late final TextEditingController _companyController;
+  late final TextEditingController _phoneController;
+  late final TextEditingController _emailController;
+  late final TextEditingController _websiteController;
+  String? _pendingLogoPath;
+  bool _removeLogo = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final branding = BrandingModel.current;
+    branding.load();
+    _companyController =
+        TextEditingController(text: branding.companyName.value);
+    _phoneController = TextEditingController(text: branding.phone.value);
+    _emailController = TextEditingController(text: branding.email.value);
+    _websiteController = TextEditingController(text: branding.website.value);
+  }
+
+  @override
+  void dispose() {
+    _companyController.dispose();
+    _phoneController.dispose();
+    _emailController.dispose();
+    _websiteController.dispose();
+    super.dispose();
+  }
+
+  bool get _logoFixed => isOptionFixed(kOptionBrandingLogo);
+
+  Widget _field(String label, String optionKey, TextEditingController controller,
+      {String? hint}) {
+    final fixed = isOptionFixed(optionKey);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(translate(label), style: const TextStyle(fontSize: _kContentFontSize))
+            .marginOnly(left: _kContentHMargin, bottom: 4),
+        TextField(
+          controller: controller,
+          enabled: !fixed,
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: hint,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            border: const OutlineInputBorder(),
+          ),
+        ).marginOnly(left: _kContentHMargin, right: _kContentHMargin, bottom: 10),
+      ],
+    );
+  }
+
+  Widget _logoSection() {
+    final branding = BrandingModel.current;
+    return Obx(() {
+      final showExisting = !_removeLogo &&
+          _pendingLogoPath == null &&
+          branding.hasLogo.value &&
+          branding.logoPath.value.isNotEmpty;
+      final previewPath = _pendingLogoPath ??
+          (showExisting ? branding.logoPath.value : null);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(translate('Company logo'),
+                  style: const TextStyle(fontSize: _kContentFontSize))
+              .marginOnly(left: _kContentHMargin, bottom: 6),
+          if (previewPath != null)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 200, maxHeight: 80),
+              child: Image.file(
+                File(previewPath),
+                fit: BoxFit.contain,
+                errorBuilder: (ctx, error, stackTrace) =>
+                    const SizedBox.shrink(),
+              ),
+            ).marginOnly(left: _kContentHMargin, bottom: 8),
+          Row(
+            children: [
+              ElevatedButton(
+                onPressed: _logoFixed
+                    ? null
+                    : () async {
+                        final result = await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: ['png', 'jpg', 'jpeg', 'webp'],
+                        );
+                        if (result == null || result.files.isEmpty) return;
+                        final path = result.files.single.path;
+                        if (path == null) return;
+                        final file = File(path);
+                        if (!await file.exists()) return;
+                        final len = await file.length();
+                        if (len <= 0 || len > kBrandingLogoMaxBytes) {
+                          showToast(translate('Logo too large'));
+                          return;
+                        }
+                        setState(() {
+                          _pendingLogoPath = path;
+                          _removeLogo = false;
+                        });
+                      },
+                child: Text(translate('Choose logo')),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _logoFixed ||
+                        (previewPath == null && !branding.hasLogo.value)
+                    ? null
+                    : () {
+                        setState(() {
+                          _pendingLogoPath = null;
+                          _removeLogo = true;
+                        });
+                      },
+                child: Text(translate('Remove logo')),
+              ),
+            ],
+          ).marginOnly(left: _kContentHMargin, bottom: 10),
+        ],
+      );
+    });
+  }
+
+  Future<void> _onSave() async {
+    final branding = BrandingModel.current;
+    if (_removeLogo) {
+      await branding.removeLogo();
+    } else if (_pendingLogoPath != null) {
+      final err = await branding.setLogoFromPath(_pendingLogoPath!);
+      if (err != null) {
+        showToast(translate(err));
+        return;
+      }
+    }
+    await branding.save(
+      company: _companyController.text,
+      phoneValue: _phoneController.text,
+      emailValue: _emailController.text,
+      websiteValue: _websiteController.text,
+    );
+    setState(() {
+      _pendingLogoPath = null;
+      _removeLogo = false;
+    });
+    showToast(translate('Successful'));
+  }
+
+  Future<void> _onClear() async {
+    await BrandingModel.current.clear();
+    setState(() {
+      _companyController.clear();
+      _phoneController.clear();
+      _emailController.clear();
+      _websiteController.clear();
+      _pendingLogoPath = null;
+      _removeLogo = false;
+    });
+    showToast(translate('Successful'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scrollController = ScrollController();
+    return ListView(
+      controller: scrollController,
+      children: [
+        _Card(title: 'Branding', children: [
+          _field('Company name', kOptionBrandingCompanyName, _companyController),
+          _logoSection(),
+          _field('Phone', kOptionBrandingPhone, _phoneController),
+          _field('Email', kOptionBrandingEmail, _emailController),
+          _field('Website', kOptionBrandingWebsite, _websiteController,
+              hint: 'https://'),
+          Row(
+            children: [
+              ElevatedButton(
+                onPressed: _onSave,
+                child: Text(translate('Save branding')),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _onClear,
+                child: Text(translate('Clear branding')),
+              ),
+            ],
+          ).marginOnly(left: _kContentHMargin, top: 6),
+        ]),
+        const SizedBox(height: _kListViewBottomMargin),
+      ],
+    ).marginOnly(bottom: _kListViewBottomMargin);
   }
 }
 

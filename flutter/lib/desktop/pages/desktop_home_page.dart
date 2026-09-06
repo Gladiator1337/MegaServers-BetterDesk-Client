@@ -13,6 +13,7 @@ import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
+import 'package:flutter_hbb/models/branding_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
@@ -128,53 +129,57 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
-      child: Container(
-        width: isIncomingOnly ? 280.0 : 200.0,
-        color: Theme.of(context).colorScheme.background,
-        child: Stack(
-          children: [
-            Column(
-              children: [
-                SingleChildScrollView(
-                  controller: _leftPaneScrollController,
-                  child: Column(
-                    key: _childKey,
-                    children: children,
-                  ),
-                ),
-                Expanded(child: Container())
-              ],
-            ),
-            if (isOutgoingOnly)
-              Positioned(
-                bottom: 6,
-                left: 12,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: InkWell(
-                    child: Obx(
-                      () => Icon(
-                        Icons.settings,
-                        color: _editHover.value
-                            ? textColor
-                            : Colors.grey.withOpacity(0.5),
-                        size: 22,
-                      ),
+      child: Obx(() {
+        final branding = BrandingModel.current;
+        final widePane = branding.hasContactOrLogo;
+        return Container(
+          width: isIncomingOnly ? 280.0 : (widePane ? 260.0 : 200.0),
+          color: Theme.of(context).colorScheme.background,
+          child: Stack(
+            children: [
+              Column(
+                children: [
+                  SingleChildScrollView(
+                    controller: _leftPaneScrollController,
+                    child: Column(
+                      key: _childKey,
+                      children: children,
                     ),
-                    onTap: () => {
-                      if (DesktopSettingPage.tabKeys.isNotEmpty)
-                        {
-                          DesktopSettingPage.switch2page(
-                              DesktopSettingPage.tabKeys[0])
-                        }
-                    },
-                    onHover: (value) => _editHover.value = value,
                   ),
-                ),
-              )
-          ],
-        ),
-      ),
+                  Expanded(child: Container())
+                ],
+              ),
+              if (isOutgoingOnly)
+                Positioned(
+                  bottom: 6,
+                  left: 12,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: InkWell(
+                      child: Obx(
+                        () => Icon(
+                          Icons.settings,
+                          color: _editHover.value
+                              ? textColor
+                              : Colors.grey.withOpacity(0.5),
+                          size: 22,
+                        ),
+                      ),
+                      onTap: () => {
+                        if (DesktopSettingPage.tabKeys.isNotEmpty)
+                          {
+                            DesktopSettingPage.switch2page(
+                                DesktopSettingPage.tabKeys[0])
+                          }
+                      },
+                      onHover: (value) => _editHover.value = value,
+                    ),
+                  ),
+                )
+            ],
+          ),
+        );
+      }),
     );
   }
 
@@ -391,39 +396,113 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return Padding(
       padding:
           const EdgeInsets.only(left: 20.0, right: 16, top: 16.0, bottom: 5),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
-            children: [
-              if (!isOutgoingOnly)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    translate("Your Desktop"),
-                    style: Theme.of(context).textTheme.titleLarge,
+      child: Obx(() {
+        final branding = BrandingModel.current;
+        final title = branding.hasCompanyName
+            ? branding.companyName.value.trim()
+            : translate("Your Desktop");
+        final accent = Theme.of(context).colorScheme.primary;
+        final bodyStyle = Theme.of(context).textTheme.bodySmall;
+        final linkStyle = bodyStyle?.copyWith(
+          color: accent,
+          decoration: TextDecoration.underline,
+          decorationColor: accent,
+        );
+
+        Widget contactRow(IconData icon, String text, VoidCallback onTap,
+            {bool asLink = false}) {
+          return InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(icon, size: 14, color: accent),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      text,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                      style: asLink ? linkStyle : bodyStyle,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final phone = branding.phone.value.trim();
+        final email = branding.email.value.trim();
+        final website = branding.website.value.trim();
+
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!isOutgoingOnly)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+            const SizedBox(height: 10.0),
+            if (!isOutgoingOnly && branding.hasContactOrLogo) ...[
+              if (branding.hasLogo.value && branding.logoPath.value.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: ConstrainedBox(
+                    constraints:
+                        const BoxConstraints(maxWidth: 160, maxHeight: 64),
+                    child: Image.file(
+                      File(branding.logoPath.value),
+                      fit: BoxFit.contain,
+                      errorBuilder: (ctx, error, stackTrace) =>
+                          const SizedBox.shrink(),
+                    ),
                   ),
                 ),
-            ],
-          ),
-          SizedBox(
-            height: 10.0,
-          ),
-          if (!isOutgoingOnly)
-            Text(
-              translate("desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          if (isOutgoingOnly)
-            Text(
-              translate("outgoing_only_desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-        ],
-      ),
+              if (phone.isNotEmpty)
+                contactRow(
+                  Icons.phone_outlined,
+                  phone,
+                  () => launchUrl(Uri(scheme: 'tel', path: phone)),
+                ),
+              if (email.isNotEmpty)
+                contactRow(
+                  Icons.email_outlined,
+                  email,
+                  () => launchUrl(Uri(scheme: 'mailto', path: email)),
+                  asLink: true,
+                ),
+              if (website.isNotEmpty)
+                contactRow(
+                  Icons.language_outlined,
+                  website,
+                  () => launchUrl(
+                    Uri.parse(BrandingModel.normalizeWebsiteUrl(website)),
+                  ),
+                  asLink: true,
+                ),
+            ] else if (!isOutgoingOnly)
+              Text(
+                translate("desk_tip"),
+                overflow: TextOverflow.clip,
+                style: bodyStyle,
+              ),
+            if (isOutgoingOnly)
+              Text(
+                translate("outgoing_only_desk_tip"),
+                overflow: TextOverflow.clip,
+                style: bodyStyle,
+              ),
+          ],
+        );
+      }),
     );
   }
 
