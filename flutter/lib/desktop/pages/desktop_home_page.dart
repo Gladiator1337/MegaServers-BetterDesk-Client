@@ -455,17 +455,21 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               if (branding.hasLogo.value && branding.logoPath.value.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8.0),
-                  child: ConstrainedBox(
-                    constraints:
-                        const BoxConstraints(maxWidth: 160, maxHeight: 64),
-                    child: Image.file(
-                      File(branding.logoPath.value),
-                      key: ValueKey(
-                          'branding-home-${branding.logoPath.value}-${branding.logoEpoch.value}'),
-                      fit: BoxFit.contain,
-                      gaplessPlayback: false,
-                      errorBuilder: (ctx, error, stackTrace) =>
-                          const SizedBox.shrink(),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 120),
+                      child: Image.file(
+                        File(branding.logoPath.value),
+                        key: ValueKey(
+                            'branding-home-${branding.logoPath.value}-${branding.logoEpoch.value}'),
+                        width: double.infinity,
+                        fit: BoxFit.fitWidth,
+                        alignment: Alignment.centerLeft,
+                        gaplessPlayback: false,
+                        errorBuilder: (ctx, error, stackTrace) =>
+                            const SizedBox.shrink(),
+                      ),
                     ),
                   ),
                 ),
