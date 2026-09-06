@@ -2495,7 +2495,10 @@ class _BrandingState extends State<_Branding> {
               constraints: const BoxConstraints(maxWidth: 200, maxHeight: 80),
               child: Image.file(
                 File(previewPath),
+                key: ValueKey(
+                    'branding-preview-$previewPath-${branding.logoEpoch.value}'),
                 fit: BoxFit.contain,
+                gaplessPlayback: false,
                 errorBuilder: (ctx, error, stackTrace) =>
                     const SizedBox.shrink(),
               ),

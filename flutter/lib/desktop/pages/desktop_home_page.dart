@@ -460,7 +460,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                         const BoxConstraints(maxWidth: 160, maxHeight: 64),
                     child: Image.file(
                       File(branding.logoPath.value),
+                      key: ValueKey(
+                          'branding-home-${branding.logoPath.value}-${branding.logoEpoch.value}'),
                       fit: BoxFit.contain,
+                      gaplessPlayback: false,
                       errorBuilder: (ctx, error, stackTrace) =>
                           const SizedBox.shrink(),
                     ),

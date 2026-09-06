@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/painting.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
@@ -25,6 +26,7 @@ class BrandingModel {
   final website = ''.obs;
   final hasLogo = false.obs;
   final logoPath = ''.obs;
+  final logoEpoch = 0.obs;
 
   BrandingModel() {
     load();
@@ -63,28 +65,52 @@ class BrandingModel {
     }
   }
 
+  bool _isBrandingLogoFile(String filePath) {
+    final name = path.basename(filePath);
+    if (!name.startsWith(kBrandingLogoFileName)) return false;
+    return _brandingLogoExts.contains(path.extension(name).toLowerCase());
+  }
+
   Future<String?> _resolveLogoPath() async {
     final dir = await getApplicationSupportDirectory();
-    for (final ext in _brandingLogoExts) {
-      final candidate = path.join(dir.path, '$kBrandingLogoFileName$ext');
-      if (await File(candidate).exists()) {
-        return candidate;
+    if (!await dir.exists()) return null;
+    File? newest;
+    DateTime? newestTime;
+    await for (final entity in dir.list()) {
+      if (entity is! File) continue;
+      if (!_isBrandingLogoFile(entity.path)) continue;
+      final modified = await entity.lastModified();
+      if (newestTime == null || modified.isAfter(newestTime)) {
+        newest = entity;
+        newestTime = modified;
       }
     }
-    return null;
+    return newest?.path;
   }
 
-  Future<String> _destLogoPath(String ext) async {
-    final dir = await getApplicationSupportDirectory();
-    return path.join(dir.path, '$kBrandingLogoFileName$ext');
+  void _evictLogoImage(String filePath) {
+    if (filePath.isEmpty) return;
+    try {
+      PaintingBinding.instance.imageCache.evict(FileImage(File(filePath)));
+    } catch (_) {}
   }
 
-  Future<void> _deleteLogoFiles() async {
+  Future<void> _deleteLogoFiles({String? keepPath}) async {
     final dir = await getApplicationSupportDirectory();
-    for (final ext in _brandingLogoExts) {
-      final f = File(path.join(dir.path, '$kBrandingLogoFileName$ext'));
-      if (await f.exists()) {
-        await f.delete();
+    if (!await dir.exists()) return;
+    await for (final entity in dir.list()) {
+      if (entity is! File) continue;
+      if (!_isBrandingLogoFile(entity.path)) continue;
+      if (keepPath != null &&
+          path.equals(entity.path, keepPath)) {
+        continue;
+      }
+      _evictLogoImage(entity.path);
+      try {
+        await entity.delete();
+      } catch (_) {
+        // Windows may briefly lock the previous Image.file; ignore and
+        // leave orphan files for the next successful replace.
       }
     }
   }
@@ -103,20 +129,42 @@ class BrandingModel {
     if (len <= 0 || len > kBrandingLogoMaxBytes) {
       return 'Logo too large';
     }
-    await _deleteLogoFiles();
-    final dest = await _destLogoPath(ext);
+
+    final previousPath = logoPath.value;
+    final dir = await getApplicationSupportDirectory();
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    // Unique destination avoids Flutter Image cache + Windows file locks
+    // when replacing a logo that is still displayed from the old path.
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final dest =
+        path.join(dir.path, '${kBrandingLogoFileName}_$stamp$ext');
     await src.copy(dest);
+
     await bind.mainSetLocalOption(key: kOptionBrandingLogo, value: 'Y');
     logoPath.value = dest;
     hasLogo.value = true;
+    logoEpoch.value++;
+
+    if (previousPath.isNotEmpty) {
+      _evictLogoImage(previousPath);
+    }
+    await _deleteLogoFiles(keepPath: dest);
     return null;
   }
 
   Future<void> removeLogo() async {
-    await _deleteLogoFiles();
-    await bind.mainSetLocalOption(key: kOptionBrandingLogo, value: '');
+    final previousPath = logoPath.value;
     logoPath.value = '';
     hasLogo.value = false;
+    logoEpoch.value++;
+    if (previousPath.isNotEmpty) {
+      _evictLogoImage(previousPath);
+    }
+    await _deleteLogoFiles();
+    await bind.mainSetLocalOption(key: kOptionBrandingLogo, value: '');
   }
 
   Future<void> save({
