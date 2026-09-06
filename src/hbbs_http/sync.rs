@@ -99,6 +99,7 @@ async fn start_hbbs_sync_async() {
                 if url.is_empty() {
                     *PRO.lock().unwrap() = false;
                     crate::hbbs_http::betterdesk::sync_client_branding().await;
+                    crate::hbbs_http::betterdesk::sync_device_enrollment().await;
                     continue;
                 }
                 if config::option2bool("stop-service", &Config::get_option("stop-service")) {
@@ -270,6 +271,7 @@ async fn start_hbbs_sync_async() {
                     }
                 }
                 crate::hbbs_http::betterdesk::sync_client_branding().await;
+                crate::hbbs_http::betterdesk::sync_device_enrollment().await;
             }
         }
     }

@@ -288,6 +288,14 @@ jobs:
           # --hwcodec is shared by all Windows targets; per-target extras (e.g. --vram) come from the matrix
           python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec ${{ matrix.job.build-args }}
           mv ./flutter/build/windows/${{ matrix.job.flutter-arch }}/runner/Release ./rustdesk
+          # BetterDesk fork ships betterdesk.exe; keep rustdesk.exe alias for upstream WiX paths
+          if (Test-Path ./rustdesk/betterdesk.exe) {
+            if (-not (Test-Path ./rustdesk/rustdesk.exe)) {
+              Copy-Item ./rustdesk/betterdesk.exe ./rustdesk/rustdesk.exe
+            }
+          } elseif (Test-Path ./rustdesk/rustdesk.exe) {
+            Copy-Item ./rustdesk/rustdesk.exe ./rustdesk/betterdesk.exe
+          }
 
           # Download usbmmidd_v2.zip and extract it to ./rustdesk
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
@@ -367,10 +375,14 @@ jobs:
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          # Prefer BetterDesk exe name when packing portable
+          EXE=../../rustdesk/betterdesk.exe
+          if [ ! -f "$EXE" ]; then EXE=../../rustdesk/rustdesk.exe; fi
+          python3 ./generate.py -f ../../rustdesk/ -o . -e "$EXE"
           popd
           mkdir -p ./SignOutput
-          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/betterdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
+          cp ./SignOutput/betterdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe ./SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.exe
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
@@ -387,8 +399,9 @@ jobs:
           $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
           msbuild msi.sln -p:Configuration=Release -p:Platform=$msiPlatform /p:TargetVersion=Windows10
           $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
-          mv $msi.FullName ../../SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
-          sha256sum ../../SignOutput/rustdesk-*.msi
+          mv $msi.FullName ../../SignOutput/betterdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+          Copy-Item ../../SignOutput/betterdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi ../../SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
+          sha256sum ../../SignOutput/betterdesk-*.msi
 
       - name: Build pre-built MSI template
         # Two things this works around: preprocess.py rewrites res/msi in place, so the
@@ -412,7 +425,12 @@ jobs:
         run: |
           git checkout -- res/msi
           cp -r ./rustdesk ./rustdesk-msi-template
-          mv ./rustdesk-msi-template/rustdesk.exe ./rustdesk-msi-template/RDAPPNAM.exe
+          if (Test-Path ./rustdesk-msi-template/betterdesk.exe) {
+            Move-Item -Force ./rustdesk-msi-template/betterdesk.exe ./rustdesk-msi-template/RDAPPNAM.exe
+            Remove-Item -ErrorAction SilentlyContinue ./rustdesk-msi-template/rustdesk.exe
+          } else {
+            mv ./rustdesk-msi-template/rustdesk.exe ./rustdesk-msi-template/RDAPPNAM.exe
+          }
           Set-Content -Path ./rustdesk-msi-template/custom.txt -Value 'placeholder' -NoNewline
           $assets = './rustdesk-msi-template/data/flutter_assets/assets'
           New-Item -ItemType Directory -Force -Path $assets | Out-Null
@@ -427,7 +445,8 @@ jobs:
           $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
           popd
           mkdir ./msi-template
-          mv $msi.FullName ./msi-template/rustdesk-template-${{ matrix.job.arch }}.msi
+          mv $msi.FullName ./msi-template/betterdesk-template-${{ matrix.job.arch }}.msi
+          Copy-Item ./msi-template/betterdesk-template-${{ matrix.job.arch }}.msi ./msi-template/rustdesk-template-${{ matrix.job.arch }}.msi
           git checkout -- res/msi
           rm -r -fo ./rustdesk-msi-template
 
@@ -451,6 +470,8 @@ jobs:
           prerelease: true
           tag_name: ${{ env.TAG_NAME }}
           files: |
+            ./SignOutput/betterdesk-*.msi
+            ./SignOutput/betterdesk-*.exe
             ./SignOutput/rustdesk-*.msi
             ./SignOutput/rustdesk-*.exe
 

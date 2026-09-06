@@ -1,0 +1,186 @@
+# BetterDesk clean desktop clients + generator templates.
+# Reuses flutter-build.yml (unsigned artifacts), then renames/publishes
+# BetterDesk-branded assets without custom.txt bake-in.
+#
+# Triggers: tag desktop/* or workflow_dispatch.
+name: BetterDesk desktop release
+
+on:
+  push:
+    tags:
+      - "desktop/*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag (e.g. desktop/1.5.0)"
+        required: true
+        default: "desktop/nightly"
+
+env:
+  VERSION: "1.5.0"
+
+jobs:
+  build:
+    uses: ./.github/workflows/flutter-build.yml
+    with:
+      upload-artifact: true
+    secrets: inherit
+
+  package-clean-and-templates:
+    name: Package clean desktops + generator templates
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Windows unsigned
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rustdesk-unsigned-windows-*
+          path: dist-raw
+          merge-multiple: false
+        continue-on-error: true
+
+      - name: Download MSI templates
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rustdesk-unsigned-msi-template-*
+          path: dist-raw/msi-template-arts
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Download macOS unsigned
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rustdesk-unsigned-macos-*
+          path: dist-raw
+          merge-multiple: false
+        continue-on-error: true
+
+      - name: Download Linux debs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "rustdesk-${{ env.VERSION }}-*.deb"
+          path: dist-raw/linux-debs
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Normalize BetterDesk layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/{windows-x86_64,windows-aarch64,linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,msi-template,clean}
+
+          # Windows folders from CI still named rustdesk-unsigned-windows-*
+          for arch in x86_64 aarch64; do
+            src=$(find dist-raw -maxdepth 2 -type d -name "rustdesk-unsigned-windows-${arch}" | head -n1 || true)
+            if [ -n "${src}" ]; then
+              cp -a "${src}/." "dist/windows-${arch}/"
+              # Prefer betterdesk.exe; fall back to rename rustdesk.exe
+              if [ -f "dist/windows-${arch}/rustdesk.exe" ] && [ ! -f "dist/windows-${arch}/betterdesk.exe" ]; then
+                mv "dist/windows-${arch}/rustdesk.exe" "dist/windows-${arch}/betterdesk.exe"
+              fi
+              rm -f "dist/windows-${arch}/custom.txt"
+              tar -C "dist/windows-${arch}" -czf "dist/clean/betterdesk-${VERSION}-windows-${arch}.tar.gz" .
+            fi
+          done
+
+          if [ -d dist-raw/msi-template-arts ]; then
+            find dist-raw/msi-template-arts -name '*.msi' -exec cp {} dist/msi-template/ \;
+            # Rename template artifacts to BetterDesk product naming
+            for f in dist/msi-template/rustdesk-template-*.msi; do
+              [ -f "$f" ] || continue
+              base=$(basename "$f" | sed 's/rustdesk-template/betterdesk-template/')
+              mv "$f" "dist/msi-template/${base}"
+            done
+          fi
+
+          for arch in x86_64 aarch64; do
+            src=$(find dist-raw -maxdepth 2 -type d -name "rustdesk-unsigned-macos-${arch}" | head -n1 || true)
+            if [ -n "${src}" ]; then
+              cp -a "${src}/." "dist/macos-${arch}/"
+              find "dist/macos-${arch}" -name custom.txt -delete || true
+              tar -C "dist/macos-${arch}" -czf "dist/clean/betterdesk-${VERSION}-macos-${arch}.tar.gz" .
+            fi
+          done
+
+          # Linux: keep .deb as clean installable; also stage a portable tree marker
+          for arch in x86_64 aarch64; do
+            deb=$(find dist-raw/linux-debs -name "*${arch}*.deb" 2>/dev/null | head -n1 || true)
+            if [ -n "${deb}" ]; then
+              cp "${deb}" "dist/clean/betterdesk-${VERSION}-linux-${arch}.deb"
+              mkdir -p "dist/linux-${arch}"
+              # Extract deb data for generator template tree when dpkg-deb available
+              if command -v dpkg-deb >/dev/null; then
+                dpkg-deb -x "${deb}" "dist/linux-${arch}/root"
+                # Flatten to usr/share/... or find binary
+                bin=$(find "dist/linux-${arch}/root" -type f \( -name betterdesk -o -name rustdesk \) | head -n1 || true)
+                if [ -n "${bin}" ]; then
+                  stage="dist/linux-${arch}/portable"
+                  mkdir -p "${stage}"
+                  cp -a "$(dirname "${bin}")/." "${stage}/"
+                  if [ -f "${stage}/rustdesk" ] && [ ! -f "${stage}/betterdesk" ]; then
+                    mv "${stage}/rustdesk" "${stage}/betterdesk"
+                  fi
+                  rm -f "${stage}/custom.txt"
+                fi
+              else
+                echo "placeholder" > "dist/linux-${arch}/README.txt"
+              fi
+            fi
+          done
+
+          ls -laR dist | head -n 200
+
+      - name: Pack generator templates
+        shell: bash
+        run: |
+          python3 scripts/pack_generator_templates.py \
+            --dist-root dist \
+            --out dist/generator-templates \
+            --version "${VERSION}" \
+            --archive
+          cp dist/generator-templates-*.tar.gz dist/clean/ || true
+          cp dist/generator-templates/manifest.json dist/clean/betterdesk-${VERSION}-generator-manifest.json || true
+
+      - name: Write clean desktop manifest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          version = os.environ["VERSION"]
+          root = Path("dist/clean")
+          assets = []
+          for p in sorted(root.glob("betterdesk-*")):
+              if p.name.endswith("manifest.json"):
+                  continue
+              h = hashlib.sha256(p.read_bytes()).hexdigest()
+              assets.append({"name": p.name, "sha256": h, "size": p.stat().st_size})
+          manifest = {
+              "schema_version": 1,
+              "product": "betterdesk-desktop",
+              "sku": "clean",
+              "version": version,
+              "note": "No custom.txt / no branding bake-in. Configure Settings → Network or use Generator templates.",
+              "assets": assets,
+          }
+          Path("dist/clean/betterdesk-desktop-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          name: BetterDesk desktop ${{ env.VERSION }}
+          prerelease: true
+          files: |
+            dist/clean/*
+            dist/msi-template/*
+            dist/generator-templates-*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

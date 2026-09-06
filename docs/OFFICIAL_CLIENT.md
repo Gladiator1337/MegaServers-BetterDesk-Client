@@ -100,9 +100,56 @@ Seed (`*.seed`) jest prywatny — trafia do panelu Generatora (jak Support Agent
 
 Fleet lock: te same pola w `override-settings` (+ opcjonalnie `hide-server-settings`).
 
-### vs Support Agent Generator
+## Support Agent (incoming-only, jak QuickSupport)
 
-Panel dziś buduje **Support Agent** (CDAP, `branding.json`). Oficjalny desktop używa **RustDesk protocol** + `custom.txt`. Docelowy `product_type: betterdesk-desktop` w panelu powinien reuse’ować `keyService` / `clientConfigHost` i produkować signed `custom.txt` + MSI template — nie `branding.json`.
+Ten sam binarny desktop BetterDesk może działać jak agent supportu: użytkownik widzi **ID + hasło**, **nie łączy się** do innych urządzeń, a technik łączy się z **pełnego** BetterDesk desktop **do** agenta. Zdalny pulpit (input) jest jednokierunkowy (controller → host); chat / schowek / pliki mogą działać w obie strony wg uprawnień sesji.
+
+Nie wymaga nowego protokołu — to istniejący hard setting `conn-type: incoming` (`is_incoming_only()` w [`libs/hbb_common/src/config.rs`](../libs/hbb_common/src/config.rs); blokada outbound w [`src/client.rs`](../src/client.rs); UI w [`flutter/lib/desktop/pages/desktop_home_page.dart`](../flutter/lib/desktop/pages/desktop_home_page.dart)).
+
+### Bake-in SKU
+
+1. Zbuduj desktop jak w [BUILD_DESKTOP.md](BUILD_DESKTOP.md) albo użyj release `desktop/*` z GitHub Actions.
+2. Skopiuj / podpisz przykład: [`examples/betterdesk-support-agent.example.json`](../examples/betterdesk-support-agent.example.json) → `custom.txt` obok `betterdesk.exe`.
+3. Albo **panel BetterDesk → Generator**: instalacja modułu szablonów z Releases Client, potem profil multi-platform (Windows / Linux / macOS).
+
+Top-level (→ `HARD_SETTINGS`):
+
+| Klucz | Wartość | Efekt |
+|-------|---------|--------|
+| `conn-type` | `incoming` | Ukrywa Connect UI; blokuje outbound (wyjątek: verified switch-sides) |
+| `disable-settings` | `Y` | Ukrywa Settings (opcjonalny lockdown floty) |
+
+W `override-settings`: serwery + `key`, `hide-server-settings`, `hide-help-cards`.
+
+### Runtime branding + enrollment
+
+Z bake-in `api-server`:
+
+- Branding: `GET /api/branding` (~60 s) — panel **Main → Client Branding**
+- Enrollment: `POST /api/devices/register` z `device_type=betterdesk-desktop` (managed → kolejka akceptacji; open → od razu)
+
+### CI: czyste klienty + szablony Generatora
+
+Workflow [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflows/betterdesk-desktop-release.yml) (tag `desktop/*`):
+
+| Asset | Zawartość |
+|-------|-----------|
+| `betterdesk-*-windows/linux/macos-*.tar.gz` / `.deb` | Czysty desktop **bez** `custom.txt` / brandingu |
+| `generator-templates-*.tar.gz` + manifest | Wejście dla konsoli BetterDesk Support Generator |
+| `betterdesk-template-*.msi` | MSI template (cab2) |
+
+Pack lokalnie: `python scripts/pack_generator_templates.py --dist-root ./dist --out ./generator-templates --version … --archive`.
+
+### Baseline bezpieczeństwa floty
+
+- Produkcja: **signed** `custom.txt` (Phase B), nie plain JSON; seed tylko na konsoli (`BETTERDESK_CUSTOM_CLIENT_SIGNING_SEED`).
+- Serwery w `override-settings` + `hide-server-settings` / `disable-settings`.
+- Preferuj HTTPS dla `api-server` gdy panel to umożliwia; `/api/branding` jest publicznym GET (kosmetyka — zaufanie = Twój API).
+- Technik używa pełnego klienta (bez `conn-type: incoming`).
+
+### vs legacy CDAP Support Agent
+
+Dawny Go/Wails Support Agent w monorepo BetterDesk został usunięty. Oficjalna ścieżka to **BetterDesk-Client** + `custom.txt` + Generator w panelu (`product_type: betterdesk-support`).
 
 ## Pliki kluczowe
 
@@ -110,7 +157,10 @@ Panel dziś buduje **Support Agent** (CDAP, `branding.json`). Oficjalny desktop 
 |-------|--------|
 | Defaults / kill public | `libs/hbb_common/src/config.rs` |
 | API / key / custom.txt | `src/common.rs` |
-| BetterDesk HTTP | `src/hbbs_http/betterdesk.rs` |
+| BetterDesk HTTP (branding + enrollment) | `src/hbbs_http/betterdesk.rs` |
 | Signing keys | `res/betterdesk/` |
-| Scripts | `scripts/generate_custom_client_signing_key.py`, `sign_custom_client_config.py` |
+| Scripts | `scripts/generate_custom_client_signing_key.py`, `sign_custom_client_config.py`, `pack_generator_templates.py` |
+| Przykład full client | `examples/betterdesk-custom.example.json` |
+| Przykład Support Agent | `examples/betterdesk-support-agent.example.json` |
+| Clean desktop CI | `.github/workflows/betterdesk-desktop-release.yml` |
 | Łączność | [CONNECTIVITY.md](CONNECTIVITY.md) |

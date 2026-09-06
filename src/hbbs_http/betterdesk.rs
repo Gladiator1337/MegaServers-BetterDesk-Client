@@ -1,7 +1,7 @@
 //! BetterDesk-specific HTTP helpers for the official desktop client.
 //!
-//! Extension point for branding / health probes and future panel Generator
-//! + enrollment features. Base URL comes from configured `api-server`.
+//! Branding sync (`/api/branding`), device enrollment (`/api/devices/register`),
+//! and health/server-key probes. Base URL comes from configured `api-server`.
 
 use std::{
     fs,
@@ -110,6 +110,104 @@ pub fn log_client_identity() {
         CLIENT_PRODUCT,
         crate::get_app_name()
     );
+}
+
+const OPTION_ENROLLMENT_STATUS: &str = "betterdesk-enrollment-status";
+const OPTION_ENROLLMENT_LAST_ATTEMPT: &str = "betterdesk-enrollment-last-attempt";
+const ENROLLMENT_RETRY_SECS: u64 = 120;
+
+lazy_static::lazy_static! {
+    static ref LAST_ENROLLMENT_POLL: Mutex<Option<Instant>> = Mutex::new(None);
+}
+
+/// POST `{api}/api/devices/register` for BetterDesk desktop / Support (incoming-only).
+///
+/// Uses `device_type: betterdesk-desktop` so the server does **not** apply the
+/// legacy CDAP Support Agent proof path. Managed mode → pending queue; open → approved.
+pub async fn sync_device_enrollment() {
+    let base = api_base();
+    if base.is_empty() || crate::is_public(&base) {
+        return;
+    }
+
+    let status = LocalConfig::get_option(OPTION_ENROLLMENT_STATUS);
+    if status == "approved" {
+        return;
+    }
+
+    {
+        let mut last = LAST_ENROLLMENT_POLL.lock().unwrap();
+        if let Some(t) = *last {
+            if t.elapsed() < Duration::from_secs(ENROLLMENT_RETRY_SECS) {
+                return;
+            }
+        }
+        *last = Some(Instant::now());
+    }
+
+    let device_id = Config::get_id();
+    if device_id.is_empty() {
+        return;
+    }
+
+    let body = serde_json::json!({
+        "device_id": device_id,
+        "uuid": crate::encode64(hbb_common::get_uuid()),
+        "hostname": crate::hostname(),
+        "platform": std::env::consts::OS,
+        "version": crate::VERSION,
+        "device_type": CLIENT_PRODUCT,
+        "tags": if config::is_incoming_only() {
+            "betterdesk-support,incoming-only"
+        } else {
+            "betterdesk-desktop"
+        },
+    });
+
+    let url = format!("{base}/api/devices/register");
+    let client = create_http_client_async_with_url(&url).await;
+    let resp = match client.post(&url).json(&body).send().await {
+        Ok(r) => r,
+        Err(err) => {
+            log::debug!("enrollment register skipped: {err}");
+            return;
+        }
+    };
+    let status_code = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !(status_code.is_success() || status_code.as_u16() == 202 || status_code.as_u16() == 403) {
+        log::debug!("enrollment register HTTP {status_code}: {text}");
+        return;
+    }
+
+    let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    let enroll_status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    if !enroll_status.is_empty() {
+        LocalConfig::set_option(OPTION_ENROLLMENT_STATUS.to_owned(), enroll_status.clone());
+        LocalConfig::set_option(
+            OPTION_ENROLLMENT_LAST_ATTEMPT.to_owned(),
+            format!("{}", hbb_common::get_time()),
+        );
+        log::info!("BetterDesk enrollment status={enroll_status}");
+    }
+
+    // Poll status when pending
+    if enroll_status == "pending" {
+        let status_url = format!("{base}/api/devices/register/status?device_id={device_id}");
+        if let Ok(r) = client.get(&status_url).send().await {
+            if let Ok(t) = r.text().await {
+                if let Ok(v) = serde_json::from_str::<Value>(&t) {
+                    if let Some(s) = v.get("status").and_then(|x| x.as_str()) {
+                        LocalConfig::set_option(OPTION_ENROLLMENT_STATUS.to_owned(), s.to_owned());
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
