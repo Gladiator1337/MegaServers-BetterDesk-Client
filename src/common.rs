@@ -2271,6 +2271,14 @@ pub fn read_custom_client(config: &str) {
         apply_custom_client_map(config.as_bytes());
         return;
     }
+
+    // Signed custom.txt is verified during very early application startup.
+    // Initialize libsodium explicitly before the first signature operation.
+    if hbb_common::sodiumoxide::init().is_err() {
+        log::error!("Failed to initialize libsodium for custom-client signature verification");
+        return;
+    }
+
     let Ok(data) = decode64(config) else {
         log::error!("Failed to decode custom client config");
         return;
