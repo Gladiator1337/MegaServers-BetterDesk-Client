@@ -28,9 +28,71 @@ jobs:
       upload-artifact: true
     secrets: inherit
 
+  prepare-macos-generator:
+    name: Prepare macOS generator app (${{ matrix.arch }})
+    needs: build
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - name: Download unsigned macOS DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: rustdesk-unsigned-macos-${{ matrix.arch }}
+          path: dmg-artifact
+
+      - name: Extract app bundle for generator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dmg="$(find dmg-artifact -type f -name '*.dmg' | head -n1 || true)"
+          if [ -z "${dmg}" ]; then
+            echo "No DMG found for ${{ matrix.arch }}"
+            exit 1
+          fi
+
+          mkdir -p mount generator
+          hdiutil attach "${dmg}" -nobrowse -readonly -mountpoint "$PWD/mount"
+          trap 'hdiutil detach "$PWD/mount" -force >/dev/null 2>&1 || true' EXIT
+
+          app="$(find "$PWD/mount" -maxdepth 1 -type d -name '*.app' | head -n1 || true)"
+          if [ -z "${app}" ]; then
+            echo "No .app bundle found in ${dmg}"
+            exit 1
+          fi
+
+          executable="$(find "${app}/Contents/MacOS" -maxdepth 1 -type f | head -n1 || true)"
+          if [ -z "${executable}" ]; then
+            echo "No macOS executable found in ${app}/Contents/MacOS"
+            exit 1
+          fi
+
+          echo "Generator app: ${app}"
+          echo "Executable: ${executable}"
+
+          export COPYFILE_DISABLE=1
+          archive="$PWD/generator/betterdesk-generator-macos-${{ matrix.arch }}.tar.gz"
+          tar -czf "${archive}" -C "$PWD/mount" "$(basename "${app}")"
+
+          echo "Archive contents:"
+          tar -tzf "${archive}" | sed -n '1,80p'
+
+          hdiutil detach "$PWD/mount"
+          trap - EXIT
+
+      - name: Upload macOS generator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: betterdesk-generator-macos-${{ matrix.arch }}
+          path: generator/betterdesk-generator-macos-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
   package-clean-and-templates:
     name: Package clean desktops + generator templates
-    needs: build
+    needs: [build, prepare-macos-generator]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -54,13 +116,12 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
-      - name: Download macOS unsigned
+      - name: Download macOS generator apps
         uses: actions/download-artifact@v4
         with:
-          pattern: rustdesk-unsigned-macos-*
-          path: dist-raw
+          pattern: betterdesk-generator-macos-*
+          path: dist-raw/macos-generator
           merge-multiple: false
-        continue-on-error: true
 
       - name: Download Linux debs
         uses: actions/download-artifact@v4
@@ -76,12 +137,12 @@ jobs:
           set -euo pipefail
           mkdir -p dist/{windows-x86_64,windows-aarch64,linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,msi-template,clean}
 
-          # Windows folders from CI still named rustdesk-unsigned-windows-*
+          # Windows folders from CI still named rustdesk-unsigned-windows-*.
           for arch in x86_64 aarch64; do
-            src=$(find dist-raw -maxdepth 2 -type d -name "rustdesk-unsigned-windows-${arch}" | head -n1 || true)
+            src="$(find dist-raw -maxdepth 2 -type d -name "rustdesk-unsigned-windows-${arch}" | head -n1 || true)"
             if [ -n "${src}" ]; then
               cp -a "${src}/." "dist/windows-${arch}/"
-              # Prefer betterdesk.exe; fall back to rename rustdesk.exe
+              # Prefer betterdesk.exe; fall back to rename rustdesk.exe.
               if [ -f "dist/windows-${arch}/rustdesk.exe" ] && [ ! -f "dist/windows-${arch}/betterdesk.exe" ]; then
                 mv "dist/windows-${arch}/rustdesk.exe" "dist/windows-${arch}/betterdesk.exe"
               fi
@@ -92,50 +153,103 @@ jobs:
 
           if [ -d dist-raw/msi-template-arts ]; then
             find dist-raw/msi-template-arts -name '*.msi' -exec cp {} dist/msi-template/ \;
-            # Rename template artifacts to BetterDesk product naming
+            # Rename template artifacts to BetterDesk product naming.
             for f in dist/msi-template/rustdesk-template-*.msi; do
               [ -f "$f" ] || continue
-              base=$(basename "$f" | sed 's/rustdesk-template/betterdesk-template/')
+              base="$(basename "$f" | sed 's/rustdesk-template/betterdesk-template/')"
               mv "$f" "dist/msi-template/${base}"
             done
           fi
 
+          # macOS generator templates must contain the .app bundle, not the DMG.
           for arch in x86_64 aarch64; do
-            src=$(find dist-raw -maxdepth 2 -type d -name "rustdesk-unsigned-macos-${arch}" | head -n1 || true)
-            if [ -n "${src}" ]; then
-              cp -a "${src}/." "dist/macos-${arch}/"
-              find "dist/macos-${arch}" -name custom.txt -delete || true
-              tar -C "dist/macos-${arch}" -czf "dist/clean/betterdesk-${VERSION}-macos-${arch}.tar.gz" .
+            archive="$(find dist-raw/macos-generator -type f -name "betterdesk-generator-macos-${arch}.tar.gz" | head -n1 || true)"
+            if [ -z "${archive}" ]; then
+              echo "Missing macOS generator archive for ${arch}"
+              exit 1
             fi
+
+            rm -rf "dist/macos-${arch}"
+            mkdir -p "dist/macos-${arch}"
+            tar -xzf "${archive}" -C "dist/macos-${arch}"
+            find "dist/macos-${arch}" -name custom.txt -delete || true
+
+            app="$(find "dist/macos-${arch}" -maxdepth 2 -type d -name '*.app' | head -n1 || true)"
+            if [ -z "${app}" ]; then
+              echo "macOS ${arch}: extracted generator template has no .app bundle"
+              exit 1
+            fi
+
+            executable="$(find "${app}/Contents/MacOS" -maxdepth 1 -type f | head -n1 || true)"
+            if [ -z "${executable}" ]; then
+              echo "macOS ${arch}: .app bundle has no executable"
+              exit 1
+            fi
+
+            tar -C "dist/macos-${arch}" -czf "dist/clean/betterdesk-${VERSION}-macos-${arch}.tar.gz" .
           done
 
-          # Linux: keep .deb as clean installable; also stage a portable tree marker
+          # Linux: keep the .deb as a clean installable and flatten the application
+          # runtime directly into dist/linux-<arch>/ so custom.txt is injected beside
+          # the betterdesk executable by the Support Generator.
           for arch in x86_64 aarch64; do
-            deb=$(find dist-raw/linux-debs -name "*${arch}*.deb" 2>/dev/null | head -n1 || true)
+            deb="$(find dist-raw/linux-debs -name "*${arch}*.deb" 2>/dev/null | head -n1 || true)"
             if [ -n "${deb}" ]; then
               cp "${deb}" "dist/clean/betterdesk-${VERSION}-linux-${arch}.deb"
-              mkdir -p "dist/linux-${arch}"
-              # Extract deb data for generator template tree when dpkg-deb available
+
+              root="dist-raw/linux-root-${arch}"
+              rm -rf "${root}" "dist/linux-${arch}"
+              mkdir -p "${root}" "dist/linux-${arch}"
+
               if command -v dpkg-deb >/dev/null; then
-                dpkg-deb -x "${deb}" "dist/linux-${arch}/root"
-                # Flatten to usr/share/... or find binary
-                bin=$(find "dist/linux-${arch}/root" -type f \( -name betterdesk -o -name rustdesk \) | head -n1 || true)
-                if [ -n "${bin}" ]; then
-                  stage="dist/linux-${arch}/portable"
-                  mkdir -p "${stage}"
-                  cp -a "$(dirname "${bin}")/." "${stage}/"
-                  if [ -f "${stage}/rustdesk" ] && [ ! -f "${stage}/betterdesk" ]; then
-                    mv "${stage}/rustdesk" "${stage}/betterdesk"
-                  fi
-                  rm -f "${stage}/custom.txt"
+                dpkg-deb -x "${deb}" "${root}"
+                bin="$(find "${root}" -type f \( -name betterdesk -o -name rustdesk \) | head -n1 || true)"
+                if [ -z "${bin}" ]; then
+                  echo "Linux ${arch}: no betterdesk/rustdesk executable found in ${deb}"
+                  exit 1
+                fi
+
+                cp -a "$(dirname "${bin}")/." "dist/linux-${arch}/"
+                if [ -f "dist/linux-${arch}/rustdesk" ] && [ ! -f "dist/linux-${arch}/betterdesk" ]; then
+                  mv "dist/linux-${arch}/rustdesk" "dist/linux-${arch}/betterdesk"
+                fi
+                rm -f "dist/linux-${arch}/custom.txt"
+
+                if [ ! -f "dist/linux-${arch}/betterdesk" ]; then
+                  echo "Linux ${arch}: flattened template has no betterdesk executable"
+                  exit 1
                 fi
               else
-                echo "placeholder" > "dist/linux-${arch}/README.txt"
+                echo "dpkg-deb not found"
+                exit 1
               fi
             fi
           done
 
-          ls -laR dist | sed -n '1,200p'
+          echo "=== Generator input validation ==="
+          for arch in x86_64 aarch64; do
+            test -f "dist/windows-${arch}/betterdesk.exe" || {
+              echo "Windows ${arch}: betterdesk.exe missing"
+              exit 1
+            }
+            test -f "dist/linux-${arch}/betterdesk" || {
+              echo "Linux ${arch}: betterdesk missing"
+              exit 1
+            }
+            find "dist/macos-${arch}" -maxdepth 2 -type d -name '*.app' -print -quit | grep -q . || {
+              echo "macOS ${arch}: .app missing"
+              exit 1
+            }
+          done
+
+          echo "=== Normalized template roots ==="
+          for d in \
+            dist/windows-x86_64 dist/windows-aarch64 \
+            dist/linux-x86_64 dist/linux-aarch64 \
+            dist/macos-x86_64 dist/macos-aarch64; do
+            echo "--- ${d}"
+            find "${d}" -maxdepth 2 -mindepth 1 -print | sed -n '1,80p'
+          done
 
       - name: Pack generator templates
         shell: bash
@@ -147,6 +261,26 @@ jobs:
             --archive
           cp dist/generator-templates-*.tar.gz dist/clean/ || true
           cp dist/generator-templates/manifest.json dist/clean/betterdesk-${VERSION}-generator-manifest.json || true
+
+      - name: Validate packed generator templates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for arch in x86_64 aarch64; do
+            test -f "dist/generator-templates/windows-${arch}/betterdesk.exe"
+            test -f "dist/generator-templates/linux-${arch}/betterdesk"
+
+            app="$(find "dist/generator-templates/macos-${arch}" -maxdepth 2 -type d -name '*.app' | head -n1 || true)"
+            test -n "${app}"
+            test -d "${app}/Contents/MacOS"
+
+            test -f "dist/generator-templates/windows-${arch}/.custom-txt-here"
+            test -f "dist/generator-templates/linux-${arch}/.custom-txt-here"
+            find "${app}/Contents/MacOS" -maxdepth 1 -name '.custom-txt-here' -print -quit | grep -q .
+          done
+
+          echo "Generator template validation OK"
 
       - name: Write clean desktop manifest
         shell: bash
