@@ -52,7 +52,7 @@ cp examples/betterdesk-support-agent.example.json /path/to/Release/custom.txt
 python scripts/sign_custom_client_config.py examples/betterdesk-support-agent.example.json > custom.txt
 ```
 
-Runtime branding: `GET /api/branding`. Enrollment: `POST /api/devices/register` (`device_type=betterdesk-desktop`).
+Runtime branding: `GET /api/branding` (both SKUs). Enrollment: `POST /api/devices/register` (`device_type=betterdesk-desktop` + `product_sku` / `conn_mode`).
 
 ### Generator templates (CI)
 

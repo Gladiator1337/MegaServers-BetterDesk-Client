@@ -4,8 +4,8 @@ Ten fork ([BetterDesk-Client](../)) jest **oficjalnym klientem desktop BetterDes
 
 1. **Nie łączy się** z publiczną infrastrukturą rustdesk.com.
 2. Użytkownik **wpisuje** ID / Relay / API / Key (Settings → Network) lub importuje deploy string z panelu.
-3. Klient **identyfikuje się** wobec API jako `betterdesk-desktop`.
-4. Mechanizmy bake-in (`custom.txt`, MSI template, deploy string) są zachowane pod przyszły **Client Generator** w panelu web.
+3. Klient **identyfikuje się** wobec API jako `betterdesk-desktop` (`device_type` / `client_product`) oraz jawnym `product_sku` (`betterdesk-desktop` | `betterdesk-support`).
+4. Mechanizmy bake-in (`custom.txt`, MSI template, deploy string) są zachowane pod **Client Generator** w panelu web (dwa SKU — dualizm poniżej).
 
 ## Kill public cloud
 
@@ -29,16 +29,36 @@ Deploy string = `reverse(base64({host,relay,api,key}))` — ten sam format co st
 
 ## Identyfikacja klienta
 
-`get_sysinfo()` wysyła m.in.:
+`get_sysinfo()`, heartbeat i enrollment wysyłają m.in.:
 
-- `app_name` — `BetterDesk Client` (lub z `custom.txt`)
+- `app_name` — `BetterDesk Client` / `BetterDesk Support Agent` (lub z `custom.txt`)
 - exe / proces — `betterdesk` (`betterdesk.exe` na Windows)
-- `client` / `client_product` — `betterdesk-desktop` (`BETTERDESK_CLIENT_PRODUCT`)
+- `client` / `client_product` / `device_type` — zawsze `betterdesk-desktop` (`BETTERDESK_CLIENT_PRODUCT`; legacy CDAP-safe)
+- `product_sku` — `betterdesk-desktop` (pełny) albo `betterdesk-support` (bake-in incoming-only)
+- `conn_mode` — `normal` albo `incoming-only` (wynik `HARD_SETTINGS`, nie życzenie serwera)
+- opcjonalnie `enrollment_status`, `branding_revision`, `branding_source`
 - `license` — `AGPL-3.0-only`
 - `upstream_project` / `upstream_repo` — RustDesk + `https://github.com/rustdesk/rustdesk`
 - `source_repo` — `https://github.com/UNITRONIX/BetterDesk-Client`
 
-Helper HTTP: [`src/hbbs_http/betterdesk.rs`](../src/hbbs_http/betterdesk.rs) (`/api/health`, `/api/branding`, `/api/server-key`).
+Helper HTTP: [`src/hbbs_http/betterdesk.rs`](../src/hbbs_http/betterdesk.rs) (`/api/health`, `/api/branding`, `/api/server-key`, identity helpers).
+
+## Dualizm SKU (Full Client vs Support Agent)
+
+Generator w panelu buduje **dwa** artefakty z tego samego binariów + różnego `custom.txt`. **Nie ma** zdalnego przełączania full ↔ support.
+
+| SKU | Generator / bake-in | Tryb pulpitu | Serwery / klucz | Branding | Strategy / API config |
+|-----|---------------------|--------------|-----------------|----------|------------------------|
+| **BetterDesk Client** (pełny) | `examples/betterdesk-custom.example.json` lub profil full | Normalny (outbound + inbound) | `default-settings` lub fleet `override-settings` | `GET /api/branding` | Heartbeat `strategy` + enrollment + sysinfo |
+| **BetterDesk Support Agent** | `product_type: betterdesk-support` / [`betterdesk-support-agent.example.json`](../examples/betterdesk-support-agent.example.json) | **Na stałe** `conn-type: incoming` | Sztywno w `override-settings` + `hide-server-settings` | Ten sam `/api/branding` | Branding + enrollment/status; **bez** wyjścia z incoming-only |
+
+**Enforcement (panel / API — poza tym repo):**
+
+- Przy register/heartbeat: jeśli `product_sku=betterdesk-support` (lub tagi `betterdesk-support,incoming-only`), oznacz urządzenie jako Support Agent.
+- Nie wysyłaj strategii usuwającej incoming-only ani zmieniającej serwery floty Support w sposób conflicting.
+- UI panelu nie oferuje „przełącz na full”; device details pokazują `product_sku`, `conn_mode`, enrollment, branding revision.
+
+**Enforcement (klient):** `conn-type` tylko w `HARD_SETTINGS`; heartbeat `strategy` pomija opcje fixed (`override-settings`) oraz na Support Agent klucze sieciowe / lockdown.
 
 ## Client Branding (runtime, z API)
 
@@ -102,31 +122,31 @@ Fleet lock: te same pola w `override-settings` (+ opcjonalnie `hide-server-setti
 
 ## Support Agent (incoming-only, jak QuickSupport)
 
-Ten sam binarny desktop BetterDesk może działać jak agent supportu: użytkownik widzi **ID + hasło**, **nie łączy się** do innych urządzeń, a technik łączy się z **pełnego** BetterDesk desktop **do** agenta. Zdalny pulpit (input) jest jednokierunkowy (controller → host); chat / schowek / pliki mogą działać w obie strony wg uprawnień sesji.
+Support Agent to **osobny SKU** Generatora (patrz dualizm powyżej): użytkownik widzi **ID + hasło**, **nie łączy się** do innych urządzeń, a technik łączy się z **pełnego** BetterDesk desktop **do** agenta. Zdalny pulpit (input) jest jednokierunkowy (controller → host); chat / schowek / pliki mogą działać w obie strony wg uprawnień sesji.
 
-Nie wymaga nowego protokołu — to istniejący hard setting `conn-type: incoming` (`is_incoming_only()` w [`libs/hbb_common/src/config.rs`](../libs/hbb_common/src/config.rs); blokada outbound w [`src/client.rs`](../src/client.rs); UI w [`flutter/lib/desktop/pages/desktop_home_page.dart`](../flutter/lib/desktop/pages/desktop_home_page.dart)).
+Nie wymaga nowego protokołu — hard setting `conn-type: incoming` (`is_incoming_only()` w [`libs/hbb_common/src/config.rs`](../libs/hbb_common/src/config.rs); blokada outbound w [`src/client.rs`](../src/client.rs); UI w [`flutter/lib/desktop/pages/desktop_home_page.dart`](../flutter/lib/desktop/pages/desktop_home_page.dart)).
 
 ### Bake-in SKU
 
 1. Zbuduj desktop jak w [BUILD_DESKTOP.md](BUILD_DESKTOP.md) albo użyj release `desktop/*` z GitHub Actions.
 2. Skopiuj / podpisz przykład: [`examples/betterdesk-support-agent.example.json`](../examples/betterdesk-support-agent.example.json) → `custom.txt` obok `betterdesk.exe`.
-3. Albo **panel BetterDesk → Generator**: instalacja modułu szablonów z Releases Client, potem profil multi-platform (Windows / Linux / macOS).
+3. Albo **panel BetterDesk → Generator**: instalacja modułu szablonów z Releases Client, potem profil multi-platform (Windows / Linux / macOS) z `product_type: betterdesk-support`.
 
 Top-level (→ `HARD_SETTINGS`):
 
 | Klucz | Wartość | Efekt |
 |-------|---------|--------|
-| `conn-type` | `incoming` | Ukrywa Connect UI; blokuje outbound (wyjątek: verified switch-sides) |
+| `conn-type` | `incoming` | Ukrywa Connect UI; blokuje outbound (wyjątek: verified switch-sides); `product_sku=betterdesk-support` |
 | `disable-settings` | `Y` | Ukrywa Settings (opcjonalny lockdown floty) |
 
 W `override-settings`: serwery + `key`, `hide-server-settings`, `hide-help-cards`.
 
 ### Runtime branding + enrollment
 
-Z bake-in `api-server`:
+Z bake-in `api-server` (oba SKU):
 
 - Branding: `GET /api/branding` (~60 s) — panel **Main → Client Branding**
-- Enrollment: `POST /api/devices/register` z `device_type=betterdesk-desktop` (managed → kolejka akceptacji; open → od razu)
+- Enrollment: `POST /api/devices/register` z `device_type=betterdesk-desktop` (legacy) + `product_sku` / `conn_mode` / `tags` (managed → kolejka akceptacji; open → od razu)
 
 ### CI: czyste klienty + szablony Generatora
 

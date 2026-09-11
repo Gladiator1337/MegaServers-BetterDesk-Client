@@ -111,16 +111,35 @@ Auth konta / AB: zwykle `Authorization: Bearer {access_token}` z `LocalConfig`.
 
 | Endpoint | Moduł | Auth / gating | Cel |
 |----------|-------|---------------|-----|
-| `/api/heartbeat` | [`src/hbbs_http/sync.rs`](../src/hbbs_http/sync.rs) | pomijany gdy pusty URL lub `is_public` | heartbeat; odpowiedź: `strategy`, `disconnect`, `modified_at`, … |
-| `/api/sysinfo`, `/api/sysinfo_ver` | `sync.rs` | jak wyżej | rejestracja urządzenia / Pro |
+| `/api/heartbeat` | [`src/hbbs_http/sync.rs`](../src/hbbs_http/sync.rs) | pomijany gdy pusty URL lub `is_public` | heartbeat + tożsamość SKU; odpowiedź: `strategy`, `disconnect`, `modified_at`, … |
+| `/api/sysinfo`, `/api/sysinfo_ver` | `sync.rs` | jak wyżej | rejestracja urządzenia / Pro (+ `product_sku` / `conn_mode`) |
 | `/api/switch-grant` | `sync.rs` | jak wyżej | autoryzacja switch-sides (podpis) |
 | `/api/login-options` | [`account.rs`](../src/hbbs_http/account.rs), [`record_upload.rs`](../src/hbbs_http/record_upload.rs) | discovery metod logowania | OIDC / record |
 | `/api/oidc/auth`, `/api/oidc/auth-query` | `account.rs` | flow OIDC | konto |
 | `/api/record` | `record_upload.rs` | upload nagrań | Pro |
 | `/api/devices/deploy` | [`ui_interface.rs`](../src/ui_interface.rs) | token deploy | wdrożenie urządzenia |
 | `/api/devices/cli` | [`core_main.rs`](../src/core_main.rs) | CLI deploy | helper |
+| `/api/devices/register` | [`betterdesk.rs`](../src/hbbs_http/betterdesk.rs) | jak heartbeat gating | enrollment + `product_sku` / `conn_mode` / `tags` |
 | `/api/audit/{type}` | [`common.rs`](../src/common.rs) `get_audit_server` | tylko nie-public | audit POST |
-| `/api/branding` | [`betterdesk.rs`](../src/hbbs_http/betterdesk.rs) | publiczne (GET), bez loginu | Client Branding sync → LocalConfig `branding-*` |
+| `/api/branding` | [`betterdesk.rs`](../src/hbbs_http/betterdesk.rs) | publiczne (GET), bez loginu | Client Branding sync → LocalConfig `branding-*` (oba SKU) |
+
+### 4.3.1. Dualizm SKU — pola tożsamości (kontrakt panelu)
+
+Źródło: [`betterdesk::device_identity_fields`](../src/hbbs_http/betterdesk.rs) / `merge_device_identity`. Wysyłane w **register**, **sysinfo** i **heartbeat**.
+
+| Pole | Wartości | Znaczenie |
+|------|----------|-----------|
+| `device_type` / `client` / `client_product` | `betterdesk-desktop` | Legacy marker (nie używać do rozróżnienia Support) |
+| `product_sku` | `betterdesk-desktop` \| `betterdesk-support` | SKU Generatora; Support gdy bake-in `conn-type: incoming` |
+| `conn_mode` | `normal` \| `incoming-only` | Tryb zastosowany lokalnie (`HARD_SETTINGS`) |
+| `app_name` | string | Nazwa z bake-in / APP_NAME |
+| `tags` (register) | `betterdesk-desktop` albo `betterdesk-support,incoming-only` | Kompatybilne tagi enrollment |
+| `enrollment_status` | opcjonalnie | Lokalny status enroll |
+| `branding_revision` / `branding_source` | opcjonalnie | Sync brandingu do device details |
+
+**Panel:** zapisz te pola przy heartbeat/sysinfo/register i pokaż w szczegółach urządzenia. Support Agent (`product_sku=betterdesk-support`) nie może być „przełączony” na full przez strategy — klient ignoruje fixed/lockdown opcje; serwer nie powinien takich wysyłać.
+
+Szczegóły produktowe: [OFFICIAL_CLIENT.md](OFFICIAL_CLIENT.md) (sekcja Dualizm SKU).
 
 ### 4.4. Endpointy — Flutter (konto / AB / grupy)
 
@@ -334,7 +353,8 @@ Preferuj **additive** zmiany; nie refaktoruj istniejących helperów bez potrzeb
 
 1. [`src/hbbs_http/sync.rs`](../src/hbbs_http/sync.rs) — start z host mediatora  
 2. URL z `get_api_server`; early-return przy `is_public`  
-3. Strategy: pole w odpowiedzi heartbeat + `strategy_timestamp`
+3. Request body zawiera tożsamość SKU (`product_sku`, `conn_mode`, …) — patrz §4.3.1  
+4. Strategy: pole w odpowiedzi heartbeat + `strategy_timestamp`; Support Agent pomija fixed/lockdown opcje (`strategy_option_locked`)
 
 ### Nowy eksport FFI
 
@@ -357,6 +377,7 @@ Preferuj **additive** zmiany; nie refaktoruj istniejących helperów bez potrzeb
 | API URL, `is_public`, `POSTFIX_SERVICE` | `src/common.rs` |
 | Dispatch procesów | `src/core_main.rs` |
 | Heartbeat / sysinfo / strategy | `src/hbbs_http/sync.rs` |
+| BetterDesk branding / enrollment / SKU identity | `src/hbbs_http/betterdesk.rs` |
 | OIDC | `src/hbbs_http/account.rs` |
 | HTTP client Rust | `src/hbbs_http/http_client.rs` |
 | Opcje, porty, ipc_path | `libs/hbb_common/src/config.rs` |

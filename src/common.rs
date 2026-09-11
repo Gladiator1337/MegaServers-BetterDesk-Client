@@ -954,6 +954,7 @@ pub fn get_sysinfo() -> serde_json::Value {
         "upstream_repo": hbb_common::config::UPSTREAM_REPO_URL,
         "source_repo": hbb_common::config::FORK_REPO_URL,
     });
+    crate::hbbs_http::betterdesk::merge_device_identity(&mut out);
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let username = crate::platform::get_active_username();
