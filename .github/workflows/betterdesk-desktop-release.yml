@@ -135,7 +135,7 @@ jobs:
             fi
           done
 
-          ls -laR dist | head -n 200
+          ls -laR dist | sed -n '1,200p'
 
       - name: Pack generator templates
         shell: bash
