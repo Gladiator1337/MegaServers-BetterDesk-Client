@@ -2272,35 +2272,60 @@ pub fn read_custom_client(config: &str) {
         return;
     }
 
-    // Signed custom.txt is verified during very early application startup.
-    // Initialize libsodium explicitly before the first signature operation.
-    if hbb_common::sodiumoxide::init().is_err() {
-        log::error!("Failed to initialize libsodium for custom-client signature verification");
-        return;
-    }
-
     let Ok(data) = decode64(config) else {
         log::error!("Failed to decode custom client config");
         return;
     };
-    // Prefer BetterDesk OEM pubkey (res/betterdesk/custom-client-signing.pub).
-    // Generate with scripts/generate_custom_client_signing_key.py for the panel Generator.
-    const BETTERDESK_KEY: &str =
-        include_str!("../res/betterdesk/custom-client-signing.pub");
-    let key = BETTERDESK_KEY.trim();
-    if key.is_empty() {
-        log::error!("BetterDesk custom-client signing public key is empty; use plain JSON custom.txt or generate keys");
+
+    // BetterDesk Generator format:
+    // base64(Ed25519 signature[64] || JSON message)
+    const SIGNATURE_LEN: usize = 64;
+
+    if data.len() < SIGNATURE_LEN {
+        log::error!("Signed custom client config is too short");
         return;
     }
-    let Some(pk) = get_rs_pk(key) else {
-        log::error!("Failed to parse public key of custom client");
+
+    const BETTERDESK_KEY: &str =
+        include_str!("../res/betterdesk/custom-client-signing.pub");
+
+    let key = BETTERDESK_KEY.trim();
+    if key.is_empty() {
+        log::error!("BetterDesk custom-client signing public key is empty");
+        return;
+    }
+
+    let Ok(public_key_raw) = decode64(key) else {
+        log::error!("Failed to decode custom-client signing public key");
         return;
     };
-    let Ok(data) = sign::verify(&data, &pk) else {
+
+    let Ok(public_key_bytes) = <[u8; 32]>::try_from(public_key_raw.as_slice()) else {
+        log::error!("Invalid custom-client signing public key length");
+        return;
+    };
+
+    let Ok(signature_bytes) = <[u8; SIGNATURE_LEN]>::try_from(&data[..SIGNATURE_LEN]) else {
+        log::error!("Invalid custom-client signature length");
+        return;
+    };
+
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key_bytes) else {
+        log::error!("Invalid custom-client Ed25519 public key");
+        return;
+    };
+
+    let signature = Signature::from_bytes(&signature_bytes);
+    let message = &data[SIGNATURE_LEN..];
+
+    if verifying_key.verify(message, &signature).is_err() {
         log::error!("Failed to verify custom client config signature");
         return;
-    };
-    apply_custom_client_map(&data);
+    }
+
+    apply_custom_client_map(message);
 }
 
 fn apply_custom_client_map(data: &[u8]) {
