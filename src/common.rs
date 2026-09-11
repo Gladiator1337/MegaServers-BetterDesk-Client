@@ -2163,10 +2163,38 @@ pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
     ThrottledInterval::new(i)
 }
 
+#[cfg(windows)]
+pub fn custom_client_trace(message: &str) {
+    use std::io::Write;
+
+    let path = std::env::temp_dir().join("betterdesk-custom-trace.txt");
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "pid={} {}",
+            std::process::id(),
+            message
+        );
+        let _ = file.flush();
+    }
+}
+
+#[cfg(not(windows))]
+pub fn custom_client_trace(_message: &str) {}
+
 pub fn load_custom_client() {
+    custom_client_trace("01 load_custom_client enter");
+
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
+        custom_client_trace(&format!("02 debug custom read bytes={}", data.len()));
         read_custom_client(data.trim());
+        custom_client_trace("03 debug read_custom_client returned");
         return;
     }
     let Some(path) = std::env::current_exe().map_or(None, |x| x.parent().map(|x| x.to_path_buf()))
@@ -2176,13 +2204,35 @@ pub fn load_custom_client() {
     #[cfg(target_os = "macos")]
     let path = path.join("../Resources");
     let path = path.join("custom.txt");
+
+    custom_client_trace(&format!(
+        "04 custom path={}",
+        path.display()
+    ));
+
     if path.is_file() {
+        custom_client_trace("05 custom.txt exists");
+
         let Ok(data) = std::fs::read_to_string(&path) else {
+            custom_client_trace("06 custom.txt read FAILED before log");
             log::error!("Failed to read custom client config");
+            custom_client_trace("07 custom.txt read FAILED after log");
             return;
         };
+
+        custom_client_trace(&format!(
+            "06 custom.txt read OK bytes={}",
+            data.len()
+        ));
+
+        custom_client_trace("07 before read_custom_client");
         read_custom_client(&data.trim());
+        custom_client_trace("08 after read_custom_client");
+    } else {
+        custom_client_trace("05 custom.txt missing");
     }
+
+    custom_client_trace("09 load_custom_client return");
 }
 
 fn read_custom_client_advanced_settings(
@@ -2262,29 +2312,58 @@ pub fn get_dst_align_rgba() -> usize {
 }
 
 pub fn read_custom_client(config: &str) {
+    custom_client_trace("20 read_custom_client enter");
+
     let config = config.trim();
+
+    custom_client_trace(&format!(
+        "21 config chars={}",
+        config.len()
+    ));
+
     if config.is_empty() {
-        return;
-    }
-    // Generator Phase A / lab: plain JSON custom.txt (no signature).
-    if config.starts_with('{') {
-        apply_custom_client_map(config.as_bytes());
+        custom_client_trace("22 config empty return");
         return;
     }
 
+    // Generator Phase A / lab: plain JSON custom.txt (no signature).
+    if config.starts_with('{') {
+        custom_client_trace("22 plain JSON before apply");
+        apply_custom_client_map(config.as_bytes());
+        custom_client_trace("23 plain JSON after apply");
+        return;
+    }
+
+    custom_client_trace("24 before base64 decode");
+
     let Ok(data) = decode64(config) else {
+        custom_client_trace("25 base64 decode FAILED before log");
         log::error!("Failed to decode custom client config");
+        custom_client_trace("26 base64 decode FAILED after log");
         return;
     };
+
+    custom_client_trace(&format!(
+        "25 base64 decode OK bytes={}",
+        data.len()
+    ));
 
     // BetterDesk Generator format:
     // base64(Ed25519 signature[64] || JSON message)
     const SIGNATURE_LEN: usize = 64;
 
     if data.len() < SIGNATURE_LEN {
+        custom_client_trace("26 short signature before log");
         log::error!("Signed custom client config is too short");
+        custom_client_trace("27 short signature after log");
+
+        drop(data);
+        custom_client_trace("28 short signature after data drop");
+
         return;
     }
+
+    custom_client_trace("30 signature length OK");
 
     const BETTERDESK_KEY: &str =
         include_str!("../res/betterdesk/custom-client-signing.pub");
@@ -2295,10 +2374,18 @@ pub fn read_custom_client(config: &str) {
         return;
     }
 
+    custom_client_trace("31 before public key base64 decode");
+
     let Ok(public_key_raw) = decode64(key) else {
+        custom_client_trace("32 public key decode FAILED");
         log::error!("Failed to decode custom-client signing public key");
         return;
     };
+
+    custom_client_trace(&format!(
+        "32 public key decode OK bytes={}",
+        public_key_raw.len()
+    ));
 
     let Ok(public_key_bytes) = <[u8; 32]>::try_from(public_key_raw.as_slice()) else {
         log::error!("Invalid custom-client signing public key length");
@@ -2312,20 +2399,40 @@ pub fn read_custom_client(config: &str) {
 
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
+    custom_client_trace("33 before VerifyingKey::from_bytes");
+
     let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key_bytes) else {
+        custom_client_trace("34 VerifyingKey FAILED");
         log::error!("Invalid custom-client Ed25519 public key");
         return;
     };
 
+    custom_client_trace("34 VerifyingKey OK");
+
     let signature = Signature::from_bytes(&signature_bytes);
+    custom_client_trace("35 Signature::from_bytes OK");
+
     let message = &data[SIGNATURE_LEN..];
 
+    custom_client_trace(&format!(
+        "36 message bytes={}",
+        message.len()
+    ));
+
+    custom_client_trace("37 before Ed25519 verify");
+
     if verifying_key.verify(message, &signature).is_err() {
+        custom_client_trace("38 Ed25519 verify FAILED");
         log::error!("Failed to verify custom client config signature");
         return;
     }
 
+    custom_client_trace("38 Ed25519 verify OK");
+    custom_client_trace("39 before apply_custom_client_map");
+
     apply_custom_client_map(message);
+
+    custom_client_trace("40 after apply_custom_client_map");
 }
 
 fn apply_custom_client_map(data: &[u8]) {

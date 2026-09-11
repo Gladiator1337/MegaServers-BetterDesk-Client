@@ -32,12 +32,27 @@ pub fn core_main() -> Option<Vec<String>> {
     if !crate::common::global_init() {
         return None;
     }
+    crate::common::custom_client_trace("90 core_main before load_custom_client");
+
     crate::load_custom_client();
+
+    crate::common::custom_client_trace("91 core_main after load_custom_client");
+
+    crate::common::custom_client_trace("92 before log_client_identity");
     crate::hbbs_http::betterdesk::log_client_identity();
+    crate::common::custom_client_trace("93 after log_client_identity");
+
     #[cfg(windows)]
-    if !crate::platform::windows::bootstrap() {
-        // return None to terminate the process
-        return None;
+    {
+        crate::common::custom_client_trace("94 before windows bootstrap");
+
+        if !crate::platform::windows::bootstrap() {
+            crate::common::custom_client_trace("95 windows bootstrap FALSE");
+            // return None to terminate the process
+            return None;
+        }
+
+        crate::common::custom_client_trace("95 windows bootstrap TRUE");
     }
     let mut args = Vec::new();
     let mut flutter_args = Vec::new();
