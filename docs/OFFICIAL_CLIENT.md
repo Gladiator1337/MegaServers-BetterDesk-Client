@@ -150,12 +150,20 @@ Z bake-in `api-server` (oba SKU):
 
 ### CI: czyste klienty + szablony Generatora
 
-Workflow [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflows/betterdesk-desktop-release.yml) (tag `desktop/*`):
+Workflow [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflows/betterdesk-desktop-release.yml):
+
+| Trigger | Zachowanie |
+|---------|------------|
+| Push na `master` (po aktualizacji) | Build + **development prerelease** `desktop/<ver>-dev.<run>+<sha>` z changelogiem |
+| Tag `desktop/*` | Build + prerelease pod tym tagiem |
+| `workflow_dispatch` | Ręczny build / tag |
+
+**W CI budowany jest tylko pełny BetterDesk Client** (`product_sku=betterdesk-desktop`, bez `custom.txt`). **Support Agent nie ma osobnego joba** — powstaje w panelu (Generator + bake-in), nie w GitHub Actions.
 
 | Asset | Zawartość |
 |-------|-----------|
 | `betterdesk-*-windows/linux/macos-*.tar.gz` / `.deb` | Czysty desktop **bez** `custom.txt` / brandingu |
-| `generator-templates-*.tar.gz` + manifest | Wejście dla konsoli BetterDesk Support Generator |
+| `generator-templates-*.tar.gz` + manifest | Czyste binaria pod konsolowy Generator (panel dokłada `custom.txt`) |
 | `betterdesk-template-*.msi` | MSI template (cab2) |
 
 Pack lokalnie: `python scripts/pack_generator_templates.py --dist-root ./dist --out ./generator-templates --version … --archive`.
