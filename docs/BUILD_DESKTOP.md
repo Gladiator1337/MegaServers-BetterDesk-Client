@@ -200,4 +200,4 @@ Official BetterDesk identity, public-server kill, Client Generator bake-in (`cus
 
 Example configs: [`examples/betterdesk-custom.example.json`](../examples/betterdesk-custom.example.json), [`examples/betterdesk-support-agent.example.json`](../examples/betterdesk-support-agent.example.json).
 
-Release workflow (clean + generator templates): [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflows/betterdesk-desktop-release.yml).
+Release workflow (clean desktop agents + installers + generator templates): [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflows/betterdesk-desktop-release.yml). Desktop-only reusable build: [`.github/workflows/flutter-build.yml`](../.github/workflows/flutter-build.yml).

@@ -150,7 +150,7 @@ Z bake-in `api-server` (oba SKU):
 
 ### CI: czyste klienty + szablony Generatora
 
-Workflow [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflows/betterdesk-desktop-release.yml):
+Jedyny workflow release: [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflows/betterdesk-desktop-release.yml) (wołany build: [`flutter-build.yml`](../.github/workflows/flutter-build.yml) — **tylko desktop**).
 
 | Trigger | Zachowanie |
 |---------|------------|
@@ -158,12 +158,16 @@ Workflow [`.github/workflows/betterdesk-desktop-release.yml`](../.github/workflo
 | Tag `desktop/*` | Build + prerelease pod tym tagiem |
 | `workflow_dispatch` | Ręczny build / tag |
 
-**W CI budowany jest tylko pełny BetterDesk Client** (`product_sku=betterdesk-desktop`, bez `custom.txt`). **Support Agent nie ma osobnego joba** — powstaje w panelu (Generator + bake-in), nie w GitHub Actions.
+**W CI budowany jest tylko pełny BetterDesk Client** (`product_sku=betterdesk-desktop`, bez `custom.txt`, **bez** `conn-type: incoming`). **Support Agent nie ma osobnego joba** — powstaje w panelu (Generator + bake-in), nie w GitHub Actions.
+
+Zakres platform: **Windows / Linux / macOS** (x86_64 + aarch64). Brak jobów Android, iOS, AppImage, Flatpak, Sciter, DRM, web, F-Droid, nightly/tag upstream.
 
 | Asset | Zawartość |
 |-------|-----------|
-| `betterdesk-*-windows/linux/macos-*.tar.gz` / `.deb` | Czysty desktop **bez** `custom.txt` / brandingu |
-| `generator-templates-*.tar.gz` + manifest | Czyste binaria pod konsolowy Generator (panel dokłada `custom.txt`) |
+| `betterdesk-*-windows-*.tar.gz` / `.exe` / `.msi` | Portable + instalatory Windows |
+| `betterdesk-*-linux-*.deb` / `.rpm` / `*-portable.tar.gz` | Instalatory + portable Linux |
+| `betterdesk-*-macos-*.dmg` / `.tar.gz` | DMG + archiwum macOS |
+| `generator-templates-*.tar.gz` + manifest | Czyste binaria pod konsolowy Generator |
 | `betterdesk-template-*.msi` | MSI template (cab2) |
 
 Pack lokalnie: `python scripts/pack_generator_templates.py --dist-root ./dist --out ./generator-templates --version … --archive`.

@@ -157,6 +157,22 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
+      - name: Download Linux rpms
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "rustdesk-${{ env.VERSION }}-*-rpms"
+          path: dist-raw/linux-rpms
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Download Windows installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: betterdesk-windows-installers-*
+          path: dist-raw/windows-installers
+          merge-multiple: true
+        continue-on-error: true
+
       - name: Normalize BetterDesk layout (full client only)
         shell: bash
         run: |
@@ -178,6 +194,12 @@ jobs:
             fi
           done
 
+          # Portable EXE + MSI installers (standard full client, not incoming-only)
+          if [ -d dist-raw/windows-installers ]; then
+            find dist-raw/windows-installers -type f \( -name 'betterdesk-*.exe' -o -name 'betterdesk-*.msi' \) \
+              -exec cp {} dist/clean/ \;
+          fi
+
           if [ -d dist-raw/msi-template-arts ]; then
             find dist-raw/msi-template-arts -name '*.msi' -exec cp {} dist/msi-template/ \;
             for f in dist/msi-template/rustdesk-template-*.msi; do
@@ -192,6 +214,11 @@ jobs:
             if [ -n "${src}" ]; then
               cp -a "${src}/." "dist/macos-${arch}/"
               find "dist/macos-${arch}" -name custom.txt -delete || true
+              # Prefer a named DMG in clean/ when present
+              dmg=$(find "dist/macos-${arch}" -maxdepth 1 -name '*.dmg' | head -n1 || true)
+              if [ -n "${dmg}" ]; then
+                cp "${dmg}" "dist/clean/betterdesk-${VERSION}-macos-${arch}.dmg"
+              fi
               tar -C "dist/macos-${arch}" -czf "dist/clean/betterdesk-${VERSION}-macos-${arch}.tar.gz" .
             fi
           done
@@ -212,10 +239,18 @@ jobs:
                     mv "${stage}/rustdesk" "${stage}/betterdesk"
                   fi
                   rm -f "${stage}/custom.txt"
+                  tar -C "${stage}" -czf "dist/clean/betterdesk-${VERSION}-linux-${arch}-portable.tar.gz" .
                 fi
               else
                 echo "placeholder" > "dist/linux-${arch}/README.txt"
               fi
+            fi
+            # Fedora / openSUSE RPMs when present
+            if [ -d dist-raw/linux-rpms ]; then
+              rpm=$(find dist-raw/linux-rpms -name "*${arch}*.rpm" ! -name '*-suse.rpm' 2>/dev/null | head -n1 || true)
+              suse=$(find dist-raw/linux-rpms -name "*${arch}*-suse.rpm" 2>/dev/null | head -n1 || true)
+              [ -n "${rpm}" ] && cp "${rpm}" "dist/clean/betterdesk-${VERSION}-linux-${arch}.rpm"
+              [ -n "${suse}" ] && cp "${suse}" "dist/clean/betterdesk-${VERSION}-linux-${arch}-suse.rpm"
             fi
           done
 
@@ -301,9 +336,11 @@ jobs:
             echo
             echo "### Scope"
             echo
-            echo "- ✅ Full / clean desktop client (Windows / Linux / macOS artifacts when available)"
-            echo "- ✅ Generator templates (clean binaries for the console — no bake-in)"
+            echo "- ✅ Full / clean desktop agents: Windows / Linux / macOS (x86_64 + aarch64 when available)"
+            echo "- ✅ Installers (MSI / EXE / DEB / RPM / DMG) and portable archives — **no** incoming-only bake-in"
+            echo "- ✅ Generator templates (clean binaries for the console — no \`custom.txt\`)"
             echo "- ❌ BetterDesk Support Agent is **not** built in GitHub Actions (panel Generator + \`custom.txt\` only)"
+            echo "- ❌ No Android / iOS / AppImage / Flatpak / Sciter / web CI jobs"
             echo
             echo "### Development changes"
             echo
