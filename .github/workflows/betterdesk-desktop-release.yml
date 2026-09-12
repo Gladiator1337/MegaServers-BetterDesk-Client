@@ -32,6 +32,9 @@ concurrency:
   group: betterdesk-desktop-release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 env:
   VERSION: "1.5.0"
   PRODUCT: betterdesk-desktop
