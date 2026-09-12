@@ -26,6 +26,10 @@ jobs:
     uses: ./.github/workflows/flutter-build.yml
     with:
       upload-artifact: true
+      # Publish the generic portable packers to the same immutable release tag
+      # that will receive the generator bundle. This avoids depending on the
+      # moving "nightly" release when assembling RDPKG-capable templates.
+      upload-tag: ${{ github.event.inputs.tag_name || github.ref_name }}
     secrets: inherit
 
   prepare-macos-generator:
@@ -108,6 +112,29 @@ jobs:
           merge-multiple: false
         continue-on-error: true
 
+      - name: Download Windows portable packer templates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-raw/portable-packer
+
+          for arch in x86_64 aarch64; do
+            asset="betterdesk-${VERSION}-${arch}.exe"
+            echo "Downloading ${asset} from release ${RELEASE_TAG}"
+            gh release download "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern "${asset}" \
+              --dir dist-raw/portable-packer \
+              --clobber
+            test -s "dist-raw/portable-packer/${asset}"
+          done
+
+          echo "=== Portable packer templates ==="
+          ls -lh dist-raw/portable-packer/
+
       - name: Download MSI templates
         uses: actions/download-artifact@v4
         with:
@@ -138,6 +165,8 @@ jobs:
           mkdir -p dist/{windows-x86_64,windows-aarch64,linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,msi-template,clean}
 
           # Windows folders from CI still named rustdesk-unsigned-windows-*.
+          # The clean runtime archive stays runtime-only; portable-packer.exe is
+          # added afterwards so it is present only in the Generator template.
           for arch in x86_64 aarch64; do
             src="$(find dist-raw -maxdepth 2 -type d -name "rustdesk-unsigned-windows-${arch}" | head -n1 || true)"
             if [ -n "${src}" ]; then
@@ -148,6 +177,13 @@ jobs:
               fi
               rm -f "dist/windows-${arch}/custom.txt"
               tar -C "dist/windows-${arch}" -czf "dist/clean/betterdesk-${VERSION}-windows-${arch}.tar.gz" .
+
+              packer="dist-raw/portable-packer/betterdesk-${VERSION}-${arch}.exe"
+              if [ ! -s "${packer}" ]; then
+                echo "Windows ${arch}: portable packer template missing: ${packer}"
+                exit 1
+              fi
+              cp "${packer}" "dist/windows-${arch}/portable-packer.exe"
             fi
           done
 
@@ -232,6 +268,10 @@ jobs:
               echo "Windows ${arch}: betterdesk.exe missing"
               exit 1
             }
+            test -s "dist/windows-${arch}/portable-packer.exe" || {
+              echo "Windows ${arch}: portable-packer.exe missing"
+              exit 1
+            }
             test -f "dist/linux-${arch}/betterdesk" || {
               echo "Linux ${arch}: betterdesk missing"
               exit 1
@@ -269,6 +309,7 @@ jobs:
 
           for arch in x86_64 aarch64; do
             test -f "dist/generator-templates/windows-${arch}/betterdesk.exe"
+            test -s "dist/generator-templates/windows-${arch}/portable-packer.exe"
             test -f "dist/generator-templates/linux-${arch}/betterdesk"
 
             app="$(find "dist/generator-templates/macos-${arch}" -maxdepth 2 -type d -name '*.app' | head -n1 || true)"
