@@ -709,6 +709,48 @@ Future<List<TRadioMenu<String>>> toolbarImageQuality(
   ];
 }
 
+Future<List<TRadioMenu<String>>> toolbarFpsMode(
+    BuildContext context, String id, FFI ffi) async {
+  var groupValue =
+      await bind.sessionGetFpsMode(sessionId: ffi.sessionId) ?? '';
+  if (![kFpsMode30, kFpsMode60, kFpsModeAdaptive].contains(groupValue)) {
+    final customFps = int.tryParse(await bind.sessionGetOption(
+            sessionId: ffi.sessionId, arg: 'custom-fps') ??
+        '');
+    groupValue = customFps == 30
+        ? kFpsMode30
+        : customFps != null && customFps >= 60
+            ? kFpsMode60
+            : kFpsMode30;
+  }
+
+  onChanged(String? value) async {
+    if (value == null) return;
+    await bind.sessionSetFpsMode(sessionId: ffi.sessionId, mode: value);
+  }
+
+  return [
+    TRadioMenu<String>(
+      child: const Text('30 FPS'),
+      value: kFpsMode30,
+      groupValue: groupValue,
+      onChanged: onChanged,
+    ),
+    TRadioMenu<String>(
+      child: const Text('60 FPS'),
+      value: kFpsMode60,
+      groupValue: groupValue,
+      onChanged: onChanged,
+    ),
+    TRadioMenu<String>(
+      child: Text(translate('Adaptive bitrate')),
+      value: kFpsModeAdaptive,
+      groupValue: groupValue,
+      onChanged: onChanged,
+    ),
+  ];
+}
+
 Future<List<TRadioMenu<String>>> toolbarCodec(
     BuildContext context, String id, FFI ffi) async {
   final sessionId = ffi.sessionId;

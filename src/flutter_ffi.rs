@@ -535,6 +535,20 @@ pub fn session_set_custom_fps(session_id: SessionID, fps: i32) {
     }
 }
 
+pub fn session_get_fps_mode(session_id: SessionID) -> Option<String> {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        Some(session.get_fps_mode())
+    } else {
+        None
+    }
+}
+
+pub fn session_set_fps_mode(session_id: SessionID, mode: String) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.set_fps_mode(mode);
+    }
+}
+
 pub fn session_get_trackpad_speed(session_id: SessionID) -> Option<i32> {
     if let Some(session) = sessions::get_session_by_session_id(&session_id) {
         Some(session.get_trackpad_speed())

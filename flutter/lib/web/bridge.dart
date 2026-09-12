@@ -141,6 +141,12 @@ class RustdeskImpl {
         () => js.context.callMethod('getByName', ['option:session', arg]));
   }
 
+  Future<String?> sessionGetFpsMode(
+      {required UuidValue sessionId, dynamic hint}) {
+    return Future(
+        () => js.context.callMethod('getByName', ['option:session', 'fps-mode']));
+  }
+
   Future<void> sessionLogin(
       {required UuidValue sessionId,
       required String osUsername,
@@ -392,6 +398,17 @@ class RustdeskImpl {
       {required UuidValue sessionId, required int fps, dynamic hint}) {
     return Future(
         () => js.context.callMethod('setByName', ['custom-fps', fps]));
+  }
+
+  Future<void> sessionSetFpsMode(
+      {required UuidValue sessionId,
+      required String mode,
+      dynamic hint}) {
+    return Future(() {
+      js.context.callMethod('setByName', ['fps-mode', mode]);
+      js.context.callMethod(
+          'setByName', ['custom-fps', mode == '30' ? 30 : 60]);
+    });
   }
 
   Future<void> sessionLockScreen({required UuidValue sessionId, dynamic hint}) {

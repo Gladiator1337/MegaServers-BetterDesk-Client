@@ -1156,6 +1156,18 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
+    async fn send_fps_mode_msg(&self, peer: &mut Stream) {
+        if self.handler.is_view_camera() {
+            return;
+        }
+        let mode = self.handler.lc.read().unwrap().get_fps_mode();
+        let mut misc = Misc::new();
+        misc.set_auto_adjust_fps(if mode == "adaptive" { 60 } else { 0 });
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        allow_err!(peer.send(&msg_out).await);
+    }
+
     fn contains_key_frame(vf: &VideoFrame) -> bool {
         use video_frame::Union::*;
         match &vf.union {
@@ -1171,6 +1183,16 @@ impl<T: InvokeUiSession> Remote<T> {
     // The controlled end can consider auto fps as the maximum decoding fps.
     #[inline]
     fn fps_control(&mut self, direct: bool, real_fps_map: HashMap<usize, i32>) {
+        if self
+            .handler
+            .lc
+            .read()
+            .unwrap()
+            .get_option(config::keys::OPTION_FPS_MODE)
+            != "adaptive"
+        {
+            return;
+        }
         self.video_threads.iter_mut().for_each(|(k, v)| {
             let real_fps = real_fps_map.get(k).cloned().unwrap_or_default();
             if real_fps == 0 {
@@ -1327,6 +1349,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         self.handler.adapt_size();
                         self.send_toggle_virtual_display_msg(peer).await;
                         self.send_toggle_privacy_mode_msg(peer).await;
+                        self.send_fps_mode_msg(peer).await;
                     }
                     self.video_format = CodecFormat::from(&vf);
 

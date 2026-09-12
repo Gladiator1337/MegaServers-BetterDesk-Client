@@ -89,6 +89,7 @@ impl UserDelay {
 #[derive(Default, Debug, Clone)]
 struct UserData {
     auto_adjust_fps: Option<u32>, // reserve for compatibility
+    adaptive_fps: Option<bool>,
     custom_fps: Option<u32>,
     quality: Option<(i64, Quality)>, // (time, quality)
     delay: UserDelay,
@@ -207,11 +208,12 @@ impl VideoQoS {
     }
 
     pub fn user_auto_adjust_fps(&mut self, id: i32, fps: u32) {
-        if fps < MIN_FPS || fps > MAX_FPS {
+        if fps != 0 && (fps < MIN_FPS || fps > MAX_FPS) {
             return;
         }
         if let Some(user) = self.users.get_mut(&id) {
-            user.auto_adjust_fps = Some(fps);
+            user.adaptive_fps = Some(fps != 0);
+            user.auto_adjust_fps = (fps != 0).then_some(fps);
         }
     }
 
@@ -268,8 +270,11 @@ impl VideoQoS {
             avg_delay = avg_delay.max(10);
             let mut fps = self.fps;
 
-            // Adaptive FPS adjustment based on network delay:
-            if avg_delay < 50 {
+            if user.adaptive_fps == Some(false) {
+                fps = user.custom_fps.unwrap_or(FPS);
+                user.delay.fps = Some(fps);
+            } else if avg_delay < 50 {
+                // Adaptive FPS adjustment based on network delay:
                 user.delay.quick_increase_fps_count += 1;
                 let mut step = if fps < normal_fps { 1 } else { 0 };
                 if user.delay.quick_increase_fps_count >= 3 {
@@ -514,7 +519,13 @@ impl VideoQoS {
         let mut fps = self
             .users
             .iter()
-            .map(|u| u.1.delay.fps.unwrap_or(INIT_FPS))
+            .map(|u| {
+                if u.1.adaptive_fps == Some(false) {
+                    u.1.custom_fps.unwrap_or(FPS)
+                } else {
+                    u.1.delay.fps.unwrap_or(INIT_FPS)
+                }
+            })
             .min()
             .unwrap_or(INIT_FPS);
 

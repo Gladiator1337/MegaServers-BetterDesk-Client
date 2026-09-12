@@ -2292,6 +2292,20 @@ impl LoginConfigHandler {
                 *self.custom_fps.lock().unwrap() = Some(custom_fps as _);
             }
         }
+        #[cfg(feature = "flutter")]
+        if let Some(fps_mode) = self.options.get(keys::OPTION_FPS_MODE) {
+            let mut fps = match fps_mode.as_str() {
+                "60" | "adaptive" => 60,
+                _ => 30,
+            };
+            if !crate::using_public_server() || self.direct == Some(true) {
+                msg.custom_fps = fps;
+            } else {
+                fps = 30;
+                msg.custom_fps = fps;
+            }
+            *self.custom_fps.lock().unwrap() = Some(fps as _);
+        }
         let view_only = self.get_toggle_option("view-only");
         if view_only {
             msg.disable_keyboard = BoolOption::Yes.into();
@@ -2496,6 +2510,26 @@ impl LoginConfigHandler {
         }
         *self.custom_fps.lock().unwrap() = Some(fps as _);
         msg_out
+    }
+
+    pub fn get_fps_mode(&self) -> String {
+        match self.get_option(keys::OPTION_FPS_MODE).as_str() {
+            "60" => "60".to_owned(),
+            "adaptive" => "adaptive".to_owned(),
+            _ => "30".to_owned(),
+        }
+    }
+
+    pub fn set_fps_mode(&mut self, mode: String) -> Message {
+        let mode = match mode.as_str() {
+            "60" => "60",
+            "adaptive" => "adaptive",
+            _ => "30",
+        };
+        self.set_option(keys::OPTION_FPS_MODE.to_owned(), mode.to_owned());
+        self.last_auto_fps = None;
+        let fps = if mode == "30" { 30 } else { 60 };
+        self.set_custom_fps(fps, true)
     }
 
     pub fn get_option(&self, k: &str) -> String {

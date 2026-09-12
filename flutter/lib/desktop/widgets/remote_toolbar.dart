@@ -1735,6 +1735,7 @@ class _DisplayMenuState extends State<_DisplayMenu> {
         viewStyle(customPercent: _customPercent),
         scrollStyle(state, colorScheme),
         imageQuality(),
+        fpsMode(),
         codec(),
         if (ffi.connType == ConnType.defaultConn)
           _ResolutionsMenu(
@@ -1945,6 +1946,26 @@ class _DisplayMenuState extends State<_DisplayMenu> {
           return _SubmenuButton(
             ffi: widget.ffi,
             child: Text(translate('Image Quality')),
+            menuChildren: v
+                .map((e) => RdoMenuButton<String>(
+                    value: e.value,
+                    groupValue: e.groupValue,
+                    onChanged: e.onChanged,
+                    child: e.child,
+                    ffi: ffi))
+                .toList(),
+          );
+        });
+  }
+
+  fpsMode() {
+    return futureBuilder(
+        future: toolbarFpsMode(context, widget.id, widget.ffi),
+        hasData: (data) {
+          final v = data as List<TRadioMenu<String>>;
+          return _SubmenuButton(
+            ffi: widget.ffi,
+            child: Text(translate('FPS')),
             menuChildren: v
                 .map((e) => RdoMenuButton<String>(
                     value: e.value,
