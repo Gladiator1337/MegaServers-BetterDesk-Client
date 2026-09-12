@@ -125,6 +125,9 @@ async fn start_hbbs_sync_async() {
                 // But strangely, sometimes we can get the username before login,
                 // we may not be able to get the username before login after the next restart.
                 let mut v = crate::get_sysinfo();
+                // Preserve our custom common.rs signing/debug changes while still
+                // applying UNITRONIX's SKU identity to sysinfo.
+                crate::hbbs_http::betterdesk::merge_device_identity(&mut v);
                 let sys_username = v["username"].as_str().unwrap_or_default().to_string();
                 // Though the username comparison is only necessary on Windows,
                 // we still keep the comparison on other platforms for consistency.
@@ -243,6 +246,7 @@ async fn start_hbbs_sync_async() {
                 }
                 let modified_at = LocalConfig::get_option("strategy_timestamp").parse::<i64>().unwrap_or(0);
                 v["modified_at"] = json!(modified_at);
+                crate::hbbs_http::betterdesk::merge_device_identity(&mut v);
                 if let Ok(s) = crate::post_request(url.clone(), v.to_string(), "").await {
                     if let Ok(mut rsp) = serde_json::from_str::<HashMap::<&str, Value>>(&s) {
                         if rsp.remove("sysinfo").is_some() {
@@ -288,22 +292,46 @@ fn heartbeat_url() -> String {
     format!("{}/api/heartbeat", url)
 }
 
+fn strategy_option_locked(key: &str) -> bool {
+    // Bake-in override-* / overwrite maps must win over heartbeat strategy.
+    if crate::ui_interface::is_option_fixed(key) {
+        return true;
+    }
+    // Support Agent: never accept server/network flips that would leave incoming-only fleet.
+    if config::is_incoming_only() {
+        matches!(
+            key,
+            keys::OPTION_CUSTOM_RENDEZVOUS_SERVER
+                | keys::OPTION_RELAY_SERVER
+                | keys::OPTION_API_SERVER
+                | keys::OPTION_KEY
+                | "conn-type"
+                | "disable-settings"
+                | "hide-server-settings"
+                | "hide-help-cards"
+        )
+    } else {
+        false
+    }
+}
+
 fn handle_config_options(config_options: HashMap<String, String>) {
     let mut options = Config::get_options();
     let default_settings = config::DEFAULT_SETTINGS.read().unwrap().clone();
-    config_options
-        .iter()
-        .map(|(k, v)| {
-            // Priority: user config > default advanced options.
-            // Only when default advanced options are also empty, remove user option (fallback to built-in default);
-            // otherwise insert an empty value so user config remains present.
-            if v.is_empty() && default_settings.get(k).map_or("", |v| v).is_empty() {
-                options.remove(k);
-            } else {
-                options.insert(k.to_string(), v.to_string());
-            }
-        })
-        .count();
+    for (k, v) in config_options.iter() {
+        if strategy_option_locked(k) {
+            log::debug!("strategy skipped locked option {k}");
+            continue;
+        }
+        // Priority: user config > default advanced options.
+        // Only when default advanced options are also empty, remove user option (fallback to built-in default);
+        // otherwise insert an empty value so user config remains present.
+        if v.is_empty() && default_settings.get(k).map_or("", |v| v).is_empty() {
+            options.remove(k);
+        } else {
+            options.insert(k.to_string(), v.to_string());
+        }
+    }
     Config::set_options(options);
 }
 
