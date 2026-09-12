@@ -418,3 +418,22 @@ Nie. Tylko zarządzanie / konto / audit / deploy. Media: patrz CONNECTIVITY.
 - Build desktop / bridge: [BUILD_DESKTOP.md](BUILD_DESKTOP.md)  
 - Reguły agentów / layout: [AGENTS.md](../AGENTS.md)  
 - Opcje: `libs/hbb_common/src/config.rs` (`keys::OPTION_*`)
+
+## BetterDesk device telemetry
+
+Desktop builds add `telemetry_schema: 1` to the existing heartbeat. The
+heartbeat carries compact resource metrics and client identity/capabilities.
+Larger hardware, service, process, event, activity, and file snapshots are
+requested through the server's allowlisted telemetry command queue and returned
+on a later heartbeat.
+
+Activity collection is opt-in through the local
+`telemetry-activity-enabled=Y` option and reports application/window metadata
+only. It does not collect URLs, document contents, keystrokes, screenshots, or
+clipboard data.
+
+When the BetterDesk API exposes `/api/telemetry/key`, the client verifies its
+signature against the existing configured server `key`, then protects the
+BetterDesk heartbeat and response with a versioned NaCl envelope. The device
+Ed25519 key signs the request. Plain HTTP without the verified key fails closed
+for the extended payload; production deployments should use HTTPS/WSS.

@@ -1137,6 +1137,12 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
             _OptionCheckBox(context, 'Enable remote configuration modification',
                 kOptionAllowRemoteConfigModification,
                 enabled: enabled, fakeValue: fakeValue),
+            _OptionCheckBox(
+                context,
+                'Enable application activity telemetry (opt-in)',
+                'telemetry-activity-enabled',
+                enabled: enabled,
+                fakeValue: fakeValue),
           ],
         ),
       ]);

@@ -20,11 +20,16 @@ class HttpService {
     // Use Rust HTTP implementation for non-web platforms for consistency.
     var useFlutterHttp = (isWeb || kIsWeb);
     if (!useFlutterHttp) {
+      final apiServer = await bind.mainGetApiServer();
+      final isBetterDeskApi = apiServer.isNotEmpty &&
+          url.toString().startsWith(apiServer) &&
+          url.path.contains('/api/');
       final enableFlutterHttpOnRust =
           mainGetLocalBoolOptionSync(kOptionEnableFlutterHttpOnRust);
       // Use flutter http if:
-      // Not `enableFlutterHttpOnRust` and no proxy is set
-      useFlutterHttp =
+      // Not `enableFlutterHttpOnRust`, no proxy is set, and this is not a
+      // BetterDesk API request requiring the native secure envelope.
+      useFlutterHttp = !isBetterDeskApi &&
           !(enableFlutterHttpOnRust || await bind.mainGetProxyStatus());
     }
 

@@ -6,6 +6,8 @@ use std::{
 
 #[cfg(not(any(target_os = "ios")))]
 use crate::{ui_interface::get_builtin_option, Connection};
+#[cfg(not(target_os = "ios"))]
+use crate::telemetry;
 use hbb_common::{
     config::{self, keys, Config, LocalConfig},
     log,
@@ -91,6 +93,7 @@ async fn start_hbbs_sync_async() {
     let mut last_sent: Option<Instant> = None;
     let mut info_uploaded = InfoUploaded::default();
     let mut sysinfo_ver = "".to_owned();
+    let mut telemetry_results: Vec<Value> = Vec::new();
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -230,7 +233,10 @@ async fn start_hbbs_sync_async() {
                         }
                     }
                 }
-                if conns.is_empty() && last_sent.map(|x| x.elapsed() < TIME_HEARTBEAT).unwrap_or(false) {
+                if conns.is_empty()
+                    && telemetry_results.is_empty()
+                    && last_sent.map(|x| x.elapsed() < TIME_HEARTBEAT).unwrap_or(false)
+                {
                     continue;
                 }
                 last_sent = Some(Instant::now());
@@ -244,8 +250,47 @@ async fn start_hbbs_sync_async() {
                 let modified_at = LocalConfig::get_option("strategy_timestamp").parse::<i64>().unwrap_or(0);
                 v["modified_at"] = json!(modified_at);
                 crate::hbbs_http::betterdesk::merge_device_identity(&mut v);
-                if let Ok(s) = crate::post_request(url.clone(), v.to_string(), "").await {
-                    if let Ok(mut rsp) = serde_json::from_str::<HashMap::<&str, Value>>(&s) {
+                v["telemetry_schema"] = json!(1);
+                let mut telemetry_payload = telemetry::heartbeat();
+                if !telemetry_results.is_empty() {
+                    telemetry_payload["results"] = Value::Array(std::mem::take(&mut telemetry_results));
+                }
+                v["telemetry"] = telemetry_payload;
+                let mut request = v.clone();
+                let telemetry_base = url.trim_end_matches("/api/heartbeat");
+                if let Ok((key_id, public_key)) =
+                    crate::hbbs_http::betterdesk::fetch_telemetry_server_key().await
+                {
+                    if let Ok(envelope) = telemetry::seal_payload(&v, &key_id, &public_key, &id) {
+                        request = json!({
+                            "id": id,
+                            "uuid": v["uuid"],
+                            "betterdesk_envelope": envelope,
+                        });
+                    } else if telemetry_base.starts_with("https://") {
+                        request = v.clone();
+                    }
+                } else if telemetry_base.starts_with("https://") {
+                    request = v.clone();
+                }
+                if !telemetry_base.starts_with("https://") && request.get("betterdesk_envelope").is_none() {
+                    request = json!({
+                        "id": id,
+                        "uuid": v["uuid"],
+                    });
+                }
+                if let Ok(s) = crate::post_request(url.clone(), request.to_string(), "").await {
+                    if let Ok(mut rsp) = serde_json::from_str::<HashMap::<String, Value>>(&s) {
+                        if let Some(envelope) = rsp.remove("betterdesk_envelope") {
+                            match telemetry::open_response(&envelope) {
+                                Ok(response) => {
+                                    if let Some(object) = response.as_object() {
+                                        rsp.extend(object.clone());
+                                    }
+                                }
+                                Err(err) => log::warn!("BetterDesk response decryption failed: {err}"),
+                            }
+                        }
                         if rsp.remove("sysinfo").is_some() {
                             info_uploaded.uploaded = false;
                             config::Status::set("sysinfo_hash", "".to_owned());
@@ -267,6 +312,11 @@ async fn start_hbbs_sync_async() {
                             if let Ok(strategy) = serde_json::from_value::<StrategyOptions>(strategy) {
                                 log::info!("strategy updated");
                                 handle_config_options(strategy.config_options);
+                            }
+                        }
+                        if let Some(commands) = rsp.remove("telemetry_commands") {
+                            if let Ok(commands) = serde_json::from_value::<Vec<Value>>(commands) {
+                                telemetry_results = telemetry::process_commands(&commands);
                             }
                         }
                     }

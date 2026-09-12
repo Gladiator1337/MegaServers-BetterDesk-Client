@@ -60,6 +60,8 @@ mod ui_interface;
 mod ui_session_interface;
 
 mod hbbs_http;
+#[cfg(not(target_os = "ios"))]
+mod telemetry;
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod clipboard_file;

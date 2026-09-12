@@ -11,6 +11,7 @@ use std::{
 };
 
 use hbb_common::{
+    base64::Engine as _,
     bail, config,
     config::{keys, Config, LocalConfig},
     log, ResultType,
@@ -39,6 +40,7 @@ const OPTION_BRANDING_SYNCED_API: &str = "branding-synced-api";
 const BRANDING_SOURCE_SERVER: &str = "server";
 const BRANDING_LOGO_MAX_BYTES: usize = 512 * 1024;
 const BRANDING_POLL_INTERVAL: Duration = Duration::from_secs(60);
+const TELEMETRY_KEY_POLL_INTERVAL: Duration = Duration::from_secs(3600);
 const OPTION_ENROLLMENT_STATUS: &str = "betterdesk-enrollment-status";
 const OPTION_ENROLLMENT_LAST_ATTEMPT: &str = "betterdesk-enrollment-last-attempt";
 const ENROLLMENT_RETRY_SECS: u64 = 120;
@@ -63,6 +65,23 @@ pub fn conn_mode() -> &'static str {
     }
 }
 
+pub fn device_capabilities() -> Vec<&'static str> {
+    if config::is_incoming_only() {
+        vec!["remote_desktop", "telemetry.metrics"]
+    } else {
+        vec![
+            "remote_desktop",
+            "telemetry.metrics",
+            "inventory.hardware",
+            "telemetry.services",
+            "telemetry.processes",
+            "telemetry.events",
+            "files.browse",
+            "files.read",
+        ]
+    }
+}
+
 /// Fields for register / sysinfo / heartbeat so the panel can show device details.
 pub fn device_identity_fields() -> Value {
     let enrollment_status = LocalConfig::get_option(OPTION_ENROLLMENT_STATUS);
@@ -72,6 +91,7 @@ pub fn device_identity_fields() -> Value {
         "product_sku": product_sku(),
         "conn_mode": conn_mode(),
         "app_name": crate::get_app_name(),
+        "capabilities": device_capabilities(),
     });
     if !enrollment_status.is_empty() {
         out["enrollment_status"] = Value::String(enrollment_status);
@@ -96,6 +116,7 @@ pub fn merge_device_identity(target: &mut Value) {
 
 lazy_static::lazy_static! {
     static ref LAST_BRANDING_POLL: Mutex<Option<Instant>> = Mutex::new(None);
+    static ref TELEMETRY_SERVER_KEY: Mutex<Option<(String, String, String, Instant)>> = Mutex::new(None);
 }
 
 fn api_base() -> String {
@@ -163,6 +184,77 @@ pub async fn fetch_server_key() -> ResultType<String> {
         }
     }
     Ok(text.trim().to_owned())
+}
+
+/// GET `{api}/api/telemetry/key` — public X25519 key used for HTTP payload
+/// protection. The key is cached briefly so heartbeat does not add a request
+/// for every sample.
+pub async fn fetch_telemetry_server_key() -> ResultType<(String, String)> {
+    {
+        let cache = TELEMETRY_SERVER_KEY.lock().unwrap();
+        if let Some((key_id, public_key, _signature, fetched_at)) = cache.as_ref() {
+            if fetched_at.elapsed() < TELEMETRY_KEY_POLL_INTERVAL {
+                return Ok((key_id.clone(), public_key.clone()));
+            }
+        }
+    }
+
+    let base = api_base();
+    if base.is_empty() {
+        bail!("BetterDesk API server is not configured");
+    }
+    let url = format!("{base}/api/telemetry/key");
+    let client = create_http_client_async_with_url(&url).await;
+    let resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        bail!("telemetry key fetch failed: HTTP {}", resp.status());
+    }
+    let value: Value = resp.json().await?;
+    let key_id = match value
+        .get("key_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value.to_owned(),
+        None => bail!("telemetry key id missing"),
+    };
+    let public_key = match value
+        .get("public_key")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value.to_owned(),
+        None => bail!("telemetry public key missing"),
+    };
+    let signature = match value
+        .get("signature")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value.to_owned(),
+        None => bail!("telemetry key signature missing"),
+    };
+    let configured_key = Config::get_option(keys::OPTION_KEY);
+    if configured_key.is_empty() {
+        bail!("BetterDesk server key is not configured");
+    }
+    let configured_key = hbb_common::base64::engine::general_purpose::STANDARD
+        .decode(configured_key)
+        .map_err(|_| hbb_common::anyhow::anyhow!("invalid BetterDesk server key"))?;
+    let signing_key = hbb_common::sodiumoxide::crypto::sign::PublicKey::from_slice(&configured_key)
+        .ok_or_else(|| hbb_common::anyhow::anyhow!("invalid BetterDesk server key size"))?;
+    let signed = hbb_common::base64::engine::general_purpose::STANDARD
+        .decode(&signature)
+        .map_err(|_| hbb_common::anyhow::anyhow!("invalid telemetry key signature"))?;
+    let verified = hbb_common::sodiumoxide::crypto::sign::verify(&signed, &signing_key)
+        .map_err(|_| hbb_common::anyhow::anyhow!("telemetry key signature mismatch"))?;
+    let expected = format!("1|{}|{}", key_id, public_key);
+    if verified != expected.as_bytes() {
+        bail!("telemetry key identity mismatch");
+    }
+    let mut cache = TELEMETRY_SERVER_KEY.lock().unwrap();
+    *cache = Some((key_id.clone(), public_key.clone(), signature, Instant::now()));
+    Ok((key_id, public_key))
 }
 
 /// Log a one-line identity banner at startup (no network).

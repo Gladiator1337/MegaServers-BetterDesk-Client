@@ -930,6 +930,9 @@ pub fn get_sysinfo() -> serde_json::Value {
     };
     let num_cpus = num_cpus::get();
     let num_pcpus = num_cpus::get_physical();
+    let domain = std::env::var("USERDOMAIN")
+        .or_else(|_| std::env::var("DOMAINNAME"))
+        .unwrap_or_default();
     let mut os = system.distribution_id();
     os = format!("{} / {}", os, system.long_os_version().unwrap_or_default());
     #[cfg(windows)]
@@ -943,7 +946,13 @@ pub fn get_sysinfo() -> serde_json::Value {
     let mut out;
     out = json!({
         "cpu": format!("{cpu}{num_cpus}/{num_pcpus} cores"),
+        "cpu_name": cpu_name,
+        "cpu_cores": num_cpus,
+        "cpu_physical_cores": num_pcpus,
+        "cpu_freq_ghz": cpu_freq,
+        "memory_gb": memory,
         "memory": format!("{memory}GB"),
+        "architecture": std::env::consts::ARCH,
         "os": os,
         "hostname": hostname,
         "app_name": get_app_name(),
@@ -954,6 +963,10 @@ pub fn get_sysinfo() -> serde_json::Value {
         "upstream_repo": hbb_common::config::UPSTREAM_REPO_URL,
         "source_repo": hbb_common::config::FORK_REPO_URL,
     });
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if !domain.is_empty() {
+        out["domain"] = json!(domain);
+    }
     crate::hbbs_http::betterdesk::merge_device_identity(&mut out);
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -1420,6 +1433,98 @@ where
     http_result.map(|(_status, text)| text)
 }
 
+#[cfg(not(target_os = "ios"))]
+fn betterdesk_api_url(url: &str) -> bool {
+    let api = get_api_server(
+        Config::get_option("api-server"),
+        Config::get_option("custom-rendezvous-server"),
+    );
+    if api.is_empty() || !url.starts_with(&api) || !url.contains("/api/") {
+        return false;
+    }
+    ![
+        "/api/telemetry/key",
+        "/api/health",
+        "/api/branding",
+        "/api/server-key",
+        "/api/software",
+        "/api/login",
+        "/api/login-options",
+        "/api/logout",
+        "/api/oidc/",
+        "/api/devices/register",
+        "/api/devices/deploy",
+        "/api/heartbeat",
+        "/api/sysinfo",
+        "/api/sysinfo_ver",
+    ]
+    .iter()
+    .any(|suffix| url.contains(suffix))
+}
+
+#[cfg(not(target_os = "ios"))]
+async fn secure_betterdesk_post(
+    url: &str,
+    body: &str,
+    header: &str,
+) -> ResultType<(String, String)> {
+    if body.trim().is_empty()
+        || body.contains("\"betterdesk_envelope\"")
+        || url.ends_with("/api/telemetry/key")
+        || url.ends_with("/api/heartbeat")
+        || url.ends_with("/api/sysinfo")
+        || url.ends_with("/api/sysinfo_ver")
+    {
+        return Ok((body.to_owned(), header.to_owned()));
+    }
+    let payload: Value = serde_json::from_str(body)?;
+    if !payload.is_object() {
+        return Ok((body.to_owned(), header.to_owned()));
+    }
+    let (key_id, public_key) = crate::hbbs_http::betterdesk::fetch_telemetry_server_key().await?;
+    let envelope =
+        crate::telemetry::seal_payload(&payload, &key_id, &public_key, &Config::get_id())
+            .map_err(|err| anyhow!("BetterDesk request encryption failed: {err}"))?;
+    let secure_body = json!({"betterdesk_envelope": envelope}).to_string();
+    let secure_header = if header.is_empty() {
+        format!(
+            "X-BetterDesk-Envelope: 1\nX-BetterDesk-Device: {}",
+            Config::get_id()
+        )
+    } else {
+        format!(
+            "{header}\nX-BetterDesk-Envelope: 1\nX-BetterDesk-Device: {}",
+            Config::get_id()
+        )
+    };
+    Ok((secure_body, secure_header))
+}
+
+#[cfg(not(target_os = "ios"))]
+fn unwrap_betterdesk_response(body: String) -> ResultType<String> {
+    let Ok(value) = serde_json::from_str::<Value>(&body) else {
+        return Ok(body);
+    };
+    let Some(envelope) = value.get("betterdesk_envelope") else {
+        return Ok(body);
+    };
+    let response = crate::telemetry::open_response(envelope)
+        .map_err(|err| anyhow!("BetterDesk response decryption failed: {err}"))?;
+    if response
+        .get("__betterdesk_http")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let encoded = response
+            .get("body")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("BetterDesk secure response body missing"))?;
+        let bytes = base64::decode(encoded)?;
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
+    }
+    Ok(serde_json::to_string(&response)?)
+}
+
 /// POST request with raw TCP proxy support.
 /// - If `USE_RAW_TCP_FOR_API` is "Y" and WS is off, goes directly through TCP proxy.
 /// - Otherwise tries HTTP first; on connection failure or 5xx status,
@@ -1427,6 +1532,18 @@ where
 /// - 4xx responses are returned as-is (server is reachable, business logic error).
 /// - If fallback also fails, returns the original HTTP result (text or error).
 pub async fn post_request(url: String, body: String, header: &str) -> ResultType<String> {
+    #[cfg(not(target_os = "ios"))]
+    if betterdesk_api_url(&url) {
+        let (body, header) = secure_betterdesk_post(&url, &body, header).await?;
+        let response = with_tcp_proxy_fallback(
+            &url,
+            "POST",
+            post_request_http(&url, &body, &header),
+            post_request_via_tcp_proxy(&url, &body, &header),
+        )
+        .await?;
+        return unwrap_betterdesk_response(response);
+    }
     with_tcp_proxy_fallback(
         &url,
         "POST",
@@ -1734,6 +1851,36 @@ pub async fn http_request_sync(
     body: Option<String>,
     header: String,
 ) -> ResultType<String> {
+    #[cfg(not(target_os = "ios"))]
+    if betterdesk_api_url(&url) && !url.ends_with("/api/telemetry/key") {
+        let payload = body
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok())
+            .filter(|value| value.is_object())
+            .unwrap_or_else(|| json!({}));
+        let (key_id, public_key) =
+            crate::hbbs_http::betterdesk::fetch_telemetry_server_key().await?;
+        let envelope =
+            crate::telemetry::seal_payload(&payload, &key_id, &public_key, &Config::get_id())
+                .map_err(|err| anyhow!("BetterDesk request encryption failed: {err}"))?;
+        let secure_body = json!({"betterdesk_envelope": envelope}).to_string();
+        let mut headers: Map<String, Value> = if header.trim().is_empty() {
+            Map::new()
+        } else {
+            serde_json::from_str(&header)?
+        };
+        headers.insert("X-BetterDesk-Envelope".to_owned(), json!("1"));
+        headers.insert("X-BetterDesk-Device".to_owned(), json!(Config::get_id()));
+        let secure_header = serde_json::to_string(&headers)?;
+        let response = with_tcp_proxy_fallback(
+            &url,
+            &method,
+            http_request_http(&url, &method, Some(secure_body.clone()), &secure_header),
+            http_request_via_tcp_proxy(&url, &method, Some(&secure_body), &secure_header),
+        )
+        .await?;
+        return unwrap_betterdesk_http_response(response);
+    }
     with_tcp_proxy_fallback(
         &url,
         &method,
@@ -1741,6 +1888,43 @@ pub async fn http_request_sync(
         http_request_via_tcp_proxy(&url, &method, body.as_deref(), &header),
     )
     .await
+}
+
+#[cfg(not(target_os = "ios"))]
+fn unwrap_betterdesk_http_response(response: String) -> ResultType<String> {
+    let mut outer: Value = serde_json::from_str(&response)?;
+    let body = outer
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let envelope: Value = serde_json::from_str(body)?;
+    let Some(envelope) = envelope.get("betterdesk_envelope") else {
+        return Ok(response);
+    };
+    let decrypted = crate::telemetry::open_response(envelope)
+        .map_err(|err| anyhow!("BetterDesk response decryption failed: {err}"))?;
+    if decrypted
+        .get("__betterdesk_http")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        if let Some(status) = decrypted.get("status_code") {
+            outer["status_code"] = status.clone();
+        }
+        if let Some(content_type) = decrypted.get("content_type") {
+            if let Some(headers) = outer.get_mut("headers").and_then(Value::as_object_mut) {
+                headers.insert("content-type".to_owned(), content_type.clone());
+            }
+        }
+        let encoded = decrypted
+            .get("body")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("BetterDesk secure response body missing"))?;
+        outer["body"] = json!(String::from_utf8_lossy(&base64::decode(encoded)?));
+        return Ok(serde_json::to_string(&outer)?);
+    }
+    outer["body"] = json!(serde_json::to_string(&decrypted)?);
+    Ok(serde_json::to_string(&outer)?)
 }
 
 /// General HTTP request via TCP proxy. Header is a JSON string (used by http_request_sync).
