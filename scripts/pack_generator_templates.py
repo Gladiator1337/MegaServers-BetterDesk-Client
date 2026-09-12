@@ -13,6 +13,11 @@ Expected layout under --dist-root (per platform/arch):
   macos-aarch64/
   msi-template/            # optional prebuilt MSI templates from CI
 
+Windows generator templates may additionally contain `portable-packer.exe`.
+That is the generic self-extracting executable used as the immutable base for
+per-customer RDPKG resource injection; it is intentionally not a custom.txt
+bake-in and can therefore be reused for every customer of the same release.
+
 Output:
   generator-templates/<platform>-<arch>/...
   generator-templates/manifest.json
@@ -84,7 +89,7 @@ def pack_one(src: Path, out_dir: Path, platform: str, arch: str) -> dict:
     with tarfile.open(archive_path, "w:gz") as tar:
         tar.add(out_dir, arcname=f"{platform}-{arch}")
 
-    return {
+    entry = {
         "platform": platform,
         "arch": arch,
         "format": "portable",
@@ -93,6 +98,20 @@ def pack_one(src: Path, out_dir: Path, platform: str, arch: str) -> dict:
         "sha256": sha256_file(archive_path),
         "size": archive_path.stat().st_size,
     }
+
+    # Windows templates can carry the generic self-extracting packer used by
+    # BetterDesk Console to inject a tiny per-customer RDPKG without rebuilding
+    # the full Rust/Flutter client. Keep the path explicit in the manifest so a
+    # future worker can feature-detect this capability without filename guessing.
+    portable_packer = out_dir / "portable-packer.exe"
+    if platform == "windows" and portable_packer.is_file():
+        entry["portable_packer"] = {
+            "path": "portable-packer.exe",
+            "sha256": sha256_file(portable_packer),
+            "size": portable_packer.stat().st_size,
+        }
+
+    return entry
 
 
 def main() -> int:
