@@ -403,7 +403,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             : translate("Your Desktop");
         final accent = Theme.of(context).colorScheme.primary;
         final bodyStyle = Theme.of(context).textTheme.bodySmall;
-        final linkStyle = bodyStyle?.copyWith(
+        final textColor = Theme.of(context).textTheme.titleLarge?.color;
+        final contactStyle = TextStyle(fontSize: 14, color: textColor);
+        final linkStyle = contactStyle.copyWith(
           color: accent,
           decoration: TextDecoration.underline,
           decorationColor: accent,
@@ -414,18 +416,24 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           return InkWell(
             onTap: onTap,
             child: Padding(
-              padding: const EdgeInsets.only(top: 4.0),
+              padding: const EdgeInsets.only(top: 6.0),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Icon(icon, size: 14, color: accent),
+                  Container(
+                    width: 2,
+                    height: 18,
+                    decoration: const BoxDecoration(color: MyTheme.accent),
+                  ),
+                  const SizedBox(width: 7),
+                  Icon(icon, size: 16, color: accent),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       text,
                       overflow: TextOverflow.ellipsis,
                       maxLines: 2,
-                      style: asLink ? linkStyle : bodyStyle,
+                      style: asLink ? linkStyle : contactStyle,
                     ),
                   ),
                 ],
