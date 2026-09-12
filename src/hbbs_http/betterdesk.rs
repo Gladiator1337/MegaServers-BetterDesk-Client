@@ -20,8 +20,16 @@ use serde_json::Value;
 
 use super::create_http_client_async_with_url;
 
-/// Product marker sent in sysinfo / future API bodies.
+/// Product marker sent as `device_type` / `client_product` (legacy CDAP-safe).
 pub const CLIENT_PRODUCT: &str = config::BETTERDESK_CLIENT_PRODUCT;
+
+/// Generator SKU: full desktop client (outbound + inbound).
+pub const PRODUCT_SKU_DESKTOP: &str = "betterdesk-desktop";
+/// Generator SKU: Support Agent (hard `conn-type: incoming`).
+pub const PRODUCT_SKU_SUPPORT: &str = "betterdesk-support";
+
+pub const CONN_MODE_NORMAL: &str = "normal";
+pub const CONN_MODE_INCOMING_ONLY: &str = "incoming-only";
 
 const OPTION_BRANDING_SOURCE: &str = "branding-source";
 const OPTION_BRANDING_REVISION: &str = "branding-revision";
@@ -31,6 +39,60 @@ const OPTION_BRANDING_SYNCED_API: &str = "branding-synced-api";
 const BRANDING_SOURCE_SERVER: &str = "server";
 const BRANDING_LOGO_MAX_BYTES: usize = 512 * 1024;
 const BRANDING_POLL_INTERVAL: Duration = Duration::from_secs(60);
+const OPTION_ENROLLMENT_STATUS: &str = "betterdesk-enrollment-status";
+const OPTION_ENROLLMENT_LAST_ATTEMPT: &str = "betterdesk-enrollment-last-attempt";
+const ENROLLMENT_RETRY_SECS: u64 = 120;
+
+/// Applied SKU from bake-in (`conn-type: incoming` → Support Agent).
+#[inline]
+pub fn product_sku() -> &'static str {
+    if config::is_incoming_only() {
+        PRODUCT_SKU_SUPPORT
+    } else {
+        PRODUCT_SKU_DESKTOP
+    }
+}
+
+/// Applied connection mode from `HARD_SETTINGS` (not a server wish).
+#[inline]
+pub fn conn_mode() -> &'static str {
+    if config::is_incoming_only() {
+        CONN_MODE_INCOMING_ONLY
+    } else {
+        CONN_MODE_NORMAL
+    }
+}
+
+/// Fields for register / sysinfo / heartbeat so the panel can show device details.
+pub fn device_identity_fields() -> Value {
+    let enrollment_status = LocalConfig::get_option(OPTION_ENROLLMENT_STATUS);
+    let branding_revision = LocalConfig::get_option(OPTION_BRANDING_REVISION);
+    let branding_source = LocalConfig::get_option(OPTION_BRANDING_SOURCE);
+    let mut out = serde_json::json!({
+        "product_sku": product_sku(),
+        "conn_mode": conn_mode(),
+        "app_name": crate::get_app_name(),
+    });
+    if !enrollment_status.is_empty() {
+        out["enrollment_status"] = Value::String(enrollment_status);
+    }
+    if !branding_revision.is_empty() {
+        out["branding_revision"] = Value::String(branding_revision);
+    }
+    if !branding_source.is_empty() {
+        out["branding_source"] = Value::String(branding_source);
+    }
+    out
+}
+
+/// Merge [`device_identity_fields`] into an existing JSON object.
+pub fn merge_device_identity(target: &mut Value) {
+    if let (Some(obj), Some(id)) = (target.as_object_mut(), device_identity_fields().as_object()) {
+        for (k, v) in id {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+}
 
 lazy_static::lazy_static! {
     static ref LAST_BRANDING_POLL: Mutex<Option<Instant>> = Mutex::new(None);
@@ -106,15 +168,13 @@ pub async fn fetch_server_key() -> ResultType<String> {
 /// Log a one-line identity banner at startup (no network).
 pub fn log_client_identity() {
     log::info!(
-        "BetterDesk official client product={} app={}",
+        "BetterDesk official client product={} sku={} conn_mode={} app={}",
         CLIENT_PRODUCT,
+        product_sku(),
+        conn_mode(),
         crate::get_app_name()
     );
 }
-
-const OPTION_ENROLLMENT_STATUS: &str = "betterdesk-enrollment-status";
-const OPTION_ENROLLMENT_LAST_ATTEMPT: &str = "betterdesk-enrollment-last-attempt";
-const ENROLLMENT_RETRY_SECS: u64 = 120;
 
 lazy_static::lazy_static! {
     static ref LAST_ENROLLMENT_POLL: Mutex<Option<Instant>> = Mutex::new(None);
@@ -150,12 +210,13 @@ pub async fn sync_device_enrollment() {
         return;
     }
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "device_id": device_id,
         "uuid": crate::encode64(hbb_common::get_uuid()),
         "hostname": crate::hostname(),
         "platform": std::env::consts::OS,
         "version": crate::VERSION,
+        // Keep legacy device_type so the server does not take the old CDAP proof path.
         "device_type": CLIENT_PRODUCT,
         "tags": if config::is_incoming_only() {
             "betterdesk-support,incoming-only"
@@ -163,6 +224,7 @@ pub async fn sync_device_enrollment() {
             "betterdesk-desktop"
         },
     });
+    merge_device_identity(&mut body);
 
     let url = format!("{base}/api/devices/register");
     let client = create_http_client_async_with_url(&url).await;

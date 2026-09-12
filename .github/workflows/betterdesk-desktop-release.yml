@@ -1,31 +1,111 @@
-# BetterDesk clean desktop clients + generator templates.
-# Reuses flutter-build.yml (unsigned artifacts), then renames/publishes
-# BetterDesk-branded assets without custom.txt bake-in.
+# BetterDesk Client (full / clean desktop) + generator templates.
 #
-# Triggers: tag desktop/* or workflow_dispatch.
+# Builds the official BetterDesk desktop client after each update on master
+# (and on desktop/* tags / manual dispatch), publishes clean release assets,
+# and produces self-contained generator templates for the console.
+#
+# BetterDesk Support Agent itself is NOT baked in here: the console Generator
+# applies customer custom.txt later. Windows generator templates additionally
+# carry a generic portable-packer.exe for per-customer RDPKG injection.
 name: BetterDesk desktop release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "desktop/*"
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+      - "LICENSE"
+      - "PRIVACY"
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. desktop/1.5.0)"
+        description: "Release tag (e.g. desktop/1.5.0 or desktop/dev-manual)"
         required: true
-        default: "desktop/nightly"
+        default: "desktop/dev-manual"
+
+concurrency:
+  group: betterdesk-desktop-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   VERSION: "1.5.0"
+  PRODUCT: betterdesk-desktop
+  PRODUCT_SKU: betterdesk-desktop
 
 jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-22.04
+    outputs:
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      is_dev: ${{ steps.meta.outputs.is_dev }}
+      previous_tag: ${{ steps.meta.outputs.previous_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute tag and changelog range
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          RUN_N="${GITHUB_RUN_NUMBER}"
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.event.inputs.tag_name }}"
+            IS_DEV=true
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
+            if echo "${TAG_NAME}" | grep -Eqi 'dev|nightly|snapshot'; then
+              IS_DEV=true
+            else
+              IS_DEV=false
+            fi
+          else
+            TAG_NAME="desktop/${VERSION}-dev.${RUN_N}-${SHORT_SHA}"
+            IS_DEV=true
+          fi
+
+          if [ "${IS_DEV}" = "true" ]; then
+            RELEASE_NAME="BetterDesk Client ${VERSION} (dev ${RUN_N})"
+          else
+            RELEASE_NAME="BetterDesk Client ${VERSION}"
+          fi
+
+          PREV="$(git describe --tags --abbrev=0 --match 'desktop/*' "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [ -z "${PREV}" ]; then
+            PREV="$(git rev-list --max-count=1 HEAD~20 2>/dev/null || echo "")"
+          fi
+
+          {
+            echo "tag_name=${TAG_NAME}"
+            echo "release_name=${RELEASE_NAME}"
+            echo "is_dev=${IS_DEV}"
+            echo "previous_tag=${PREV}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "tag_name=${TAG_NAME}"
+          echo "release_name=${RELEASE_NAME}"
+          echo "is_dev=${IS_DEV}"
+          echo "previous_tag=${PREV}"
+
   build:
-    permissions:
-      contents: write
+    needs: prepare
     uses: ./.github/workflows/flutter-build.yml
     with:
       upload-artifact: true
+      # Keep the generic self-extracting packers on the exact same immutable
+      # release tag as the generator bundle; never depend on moving nightly.
+      upload-tag: ${{ needs.prepare.outputs.tag_name }}
     secrets: inherit
 
   prepare-macos-generator:
@@ -92,13 +172,15 @@ jobs:
 
   package-clean-and-templates:
     name: Package clean desktops + generator templates
-    needs: [build, prepare-macos-generator]
+    needs: [prepare, build, prepare-macos-generator]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download Windows unsigned
         uses: actions/download-artifact@v4
@@ -107,6 +189,29 @@ jobs:
           path: dist-raw
           merge-multiple: false
         continue-on-error: true
+
+      - name: Download Windows portable packer templates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-raw/portable-packer
+
+          for arch in x86_64 aarch64; do
+            asset="betterdesk-${VERSION}-${arch}.exe"
+            echo "Downloading ${asset} from release ${RELEASE_TAG}"
+            gh release download "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern "${asset}" \
+              --dir dist-raw/portable-packer \
+              --clobber
+            test -s "dist-raw/portable-packer/${asset}"
+          done
+
+          echo "=== Portable packer templates ==="
+          ls -lh dist-raw/portable-packer/
 
       - name: Download MSI templates
         uses: actions/download-artifact@v4
@@ -137,23 +242,29 @@ jobs:
           set -euo pipefail
           mkdir -p dist/{windows-x86_64,windows-aarch64,linux-x86_64,linux-aarch64,macos-x86_64,macos-aarch64,msi-template,clean}
 
-          # Windows folders from CI still named rustdesk-unsigned-windows-*.
+          # Windows clean archives remain runtime-only. Add portable-packer.exe
+          # only after the clean archive is created, so it is generator-only.
           for arch in x86_64 aarch64; do
             src="$(find dist-raw -maxdepth 2 -type d -name "rustdesk-unsigned-windows-${arch}" | head -n1 || true)"
             if [ -n "${src}" ]; then
               cp -a "${src}/." "dist/windows-${arch}/"
-              # Prefer betterdesk.exe; fall back to rename rustdesk.exe.
               if [ -f "dist/windows-${arch}/rustdesk.exe" ] && [ ! -f "dist/windows-${arch}/betterdesk.exe" ]; then
                 mv "dist/windows-${arch}/rustdesk.exe" "dist/windows-${arch}/betterdesk.exe"
               fi
               rm -f "dist/windows-${arch}/custom.txt"
               tar -C "dist/windows-${arch}" -czf "dist/clean/betterdesk-${VERSION}-windows-${arch}.tar.gz" .
+
+              packer="dist-raw/portable-packer/betterdesk-${VERSION}-${arch}.exe"
+              if [ ! -s "${packer}" ]; then
+                echo "Windows ${arch}: portable packer template missing: ${packer}"
+                exit 1
+              fi
+              cp "${packer}" "dist/windows-${arch}/portable-packer.exe"
             fi
           done
 
           if [ -d dist-raw/msi-template-arts ]; then
             find dist-raw/msi-template-arts -name '*.msi' -exec cp {} dist/msi-template/ \;
-            # Rename template artifacts to BetterDesk product naming.
             for f in dist/msi-template/rustdesk-template-*.msi; do
               [ -f "$f" ] || continue
               base="$(basename "$f" | sed 's/rustdesk-template/betterdesk-template/')"
@@ -161,7 +272,8 @@ jobs:
             done
           fi
 
-          # macOS generator templates must contain the .app bundle, not the DMG.
+          # Keep the extracted .app bundle for the generator. The DMG itself is
+          # only transport from the macOS build and cannot receive custom.txt.
           for arch in x86_64 aarch64; do
             archive="$(find dist-raw/macos-generator -type f -name "betterdesk-generator-macos-${arch}.tar.gz" | head -n1 || true)"
             if [ -z "${archive}" ]; then
@@ -189,9 +301,8 @@ jobs:
             tar -C "dist/macos-${arch}" -czf "dist/clean/betterdesk-${VERSION}-macos-${arch}.tar.gz" .
           done
 
-          # Linux: keep the .deb as a clean installable and flatten the application
-          # runtime directly into dist/linux-<arch>/ so custom.txt is injected beside
-          # the betterdesk executable by the Support Generator.
+          # Linux templates are flat application runtime trees so custom.txt sits
+          # beside the executable. Do not restore the older root/portable nesting.
           for arch in x86_64 aarch64; do
             deb="$(find dist-raw/linux-debs -name "*${arch}*.deb" 2>/dev/null | head -n1 || true)"
             if [ -n "${deb}" ]; then
@@ -226,10 +337,26 @@ jobs:
             fi
           done
 
+          # Never publish a pre-baked Support Agent from CI. The console applies
+          # customer custom.txt later; portable-packer.exe remains generic.
+          if find dist/clean dist/msi-template \
+              \( -iname '*betterdesk-support*' -o -iname '*incoming-only*' -o -name 'custom.txt' \) \
+              2>/dev/null | grep -q .; then
+            echo "Refusing to publish Support Agent / bake-in artifacts from CI:" >&2
+            find dist/clean dist/msi-template \
+              \( -iname '*betterdesk-support*' -o -iname '*incoming-only*' -o -name 'custom.txt' \) \
+              2>/dev/null >&2 || true
+            exit 1
+          fi
+
           echo "=== Generator input validation ==="
           for arch in x86_64 aarch64; do
             test -f "dist/windows-${arch}/betterdesk.exe" || {
               echo "Windows ${arch}: betterdesk.exe missing"
+              exit 1
+            }
+            test -s "dist/windows-${arch}/portable-packer.exe" || {
+              echo "Windows ${arch}: portable-packer.exe missing"
               exit 1
             }
             test -f "dist/linux-${arch}/betterdesk" || {
@@ -269,6 +396,7 @@ jobs:
 
           for arch in x86_64 aarch64; do
             test -f "dist/generator-templates/windows-${arch}/betterdesk.exe"
+            test -s "dist/generator-templates/windows-${arch}/portable-packer.exe"
             test -f "dist/generator-templates/linux-${arch}/betterdesk"
 
             app="$(find "dist/generator-templates/macos-${arch}" -maxdepth 2 -type d -name '*.app' | head -n1 || true)"
@@ -298,22 +426,81 @@ jobs:
               assets.append({"name": p.name, "sha256": h, "size": p.stat().st_size})
           manifest = {
               "schema_version": 1,
-              "product": "betterdesk-desktop",
-              "sku": "clean",
+              "product": os.environ.get("PRODUCT", "betterdesk-desktop"),
+              "sku": os.environ.get("PRODUCT_SKU", "betterdesk-desktop"),
+              "variant": "clean",
               "version": version,
-              "note": "No custom.txt / no branding bake-in. Configure Settings → Network or use Generator templates.",
+              "note": (
+                  "Official BetterDesk Client (full). No custom.txt / no Support Agent bake-in. "
+                  "Configure Settings → Network or use console Generator templates for Support."
+              ),
               "assets": assets,
           }
           Path("dist/clean/betterdesk-desktop-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
           print(json.dumps(manifest, indent=2))
           PY
 
+      - name: Build release notes
+        id: notes
+        shell: bash
+        env:
+          PREV: ${{ needs.prepare.outputs.previous_tag }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
+          IS_DEV: ${{ needs.prepare.outputs.is_dev }}
+        run: |
+          set -euo pipefail
+          RANGE="${GITHUB_SHA}"
+          if [ -n "${PREV}" ]; then
+            RANGE="${PREV}..${GITHUB_SHA}"
+          fi
+
+          {
+            echo "## ${RELEASE_NAME}"
+            echo
+            echo "Official **BetterDesk Client** build (\`product_sku=betterdesk-desktop\`)."
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Tag: \`${TAG_NAME}\`"
+            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo "### Scope"
+            echo
+            echo "- ✅ Full / clean desktop client"
+            echo "- ✅ Generator templates with Linux flat runtimes and extracted macOS .app bundles"
+            echo "- ✅ Generic Windows x64 / ARM64 portable packers for later RDPKG injection"
+            echo "- ❌ No customer Support Agent custom.txt bake-in in GitHub Actions"
+            echo
+            echo "### Development changes"
+            echo
+            if git rev-parse --verify "${PREV}" >/dev/null 2>&1 || git cat-file -e "${PREV}^{commit}" 2>/dev/null; then
+              git log --pretty=format:'- %s (%h)' "${RANGE}" | head -n 80
+              echo
+            else
+              git log --pretty=format:'- %s (%h)' -n 20
+              echo
+            fi
+            echo
+            echo "### Notes"
+            echo
+            echo "- Unsigned CI artifacts (prerelease)."
+            echo "- Support Agent artifacts are produced by the BetterDesk console Generator from these clean templates."
+            if [ "${IS_DEV}" = "true" ]; then
+              echo "- This is a **development prerelease**."
+            fi
+          } > release-notes.md
+
+          echo "Wrote release-notes.md"
+          head -n 40 release-notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
-          name: BetterDesk desktop ${{ env.VERSION }}
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          name: ${{ needs.prepare.outputs.release_name }}
+          body_path: release-notes.md
           prerelease: true
+          make_latest: ${{ needs.prepare.outputs.is_dev != 'true' }}
           files: |
             dist/clean/*
             dist/msi-template/*
