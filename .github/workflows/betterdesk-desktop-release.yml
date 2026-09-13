@@ -364,9 +364,12 @@ jobs:
           done
 
           # Guard: never publish Support Agent bake-ins from CI
-          if find dist/clean dist/msi-template dist/generator-templates* \
+          forbidden_artifact="$(
+            find dist/clean dist/msi-template dist/generator-templates* \
               \( -iname '*betterdesk-support*' -o -iname '*incoming-only*' -o -name 'custom.txt' \) \
-              2>/dev/null | grep -q .; then
+              -print -quit 2>/dev/null || true
+          )"
+          if [ -n "${forbidden_artifact}" ]; then
             echo "Refusing to publish Support Agent / bake-in artifacts from CI:" >&2
             find dist/clean dist/msi-template dist/generator-templates* \
               \( -iname '*betterdesk-support*' -o -iname '*incoming-only*' -o -name 'custom.txt' \) \
@@ -472,7 +475,7 @@ jobs:
             echo "### Development changes"
             echo
             if git rev-parse --verify "${PREV}" >/dev/null 2>&1 || git cat-file -e "${PREV}^{commit}" 2>/dev/null; then
-              git log --pretty=format:'- %s (%h)' "${RANGE}" | head -n 80
+              git log --pretty=format:'- %s (%h)' -n 80 "${RANGE}"
               echo
             else
               git log --pretty=format:'- %s (%h)' -n 20
