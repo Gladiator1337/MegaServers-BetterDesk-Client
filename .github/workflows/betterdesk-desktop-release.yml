@@ -15,6 +15,7 @@ on:
   push:
     branches:
       - master
+      - codex/upstream-master-minimal-ci
     tags:
       - "desktop/*"
     paths-ignore:
@@ -410,6 +411,27 @@ jobs:
             find "${app}/Contents/MacOS" -maxdepth 1 -name '.custom-txt-here' -print -quit | grep -q .
           done
 
+      - name: Compute generator archive SHA-256
+        id: generator_sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="dist/generator-templates-${VERSION}.tar.gz"
+          test -f "${archive}"
+          sha256="$(sha256sum "${archive}" | awk '{print $1}')"
+          echo "sha256=${sha256}" >> "${GITHUB_OUTPUT}"
+          echo "${sha256}  ${archive}"
+
+      - name: Upload generator templates for CI validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: generator-templates-${{ env.VERSION }}-${{ steps.generator_sha.outputs.sha256 }}
+          path: |
+            dist/generator-templates-${{ env.VERSION }}.tar.gz
+            dist/generator-templates/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Write clean desktop manifest
         shell: bash
         run: |
@@ -495,6 +517,7 @@ jobs:
           head -n 40 release-notes.md
 
       - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag_name }}
